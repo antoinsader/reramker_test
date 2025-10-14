@@ -252,9 +252,17 @@ class MyModel(nn.Module):
     
     def forward(self, x_batch):
         query_tokens, candidates_tokens = x_batch
+
+        if self.use_cuda:
+            candidates_tokens["input_ids"] = candidates_tokens["input_ids"].to("cuda", non_blocking=True)
+            candidates_tokens["input_ids"] = candidates_tokens["input_ids"].to("cuda", non_blocking=True)
+            query_tokens["input_ids"] = query_tokens["input_ids"].to("cuda", non_blocking=True)
+            query_tokens["attention_mask"] = query_tokens["attention_mask"].to("cuda", non_blocking=True)
+            
         batch_size, topk, max_length = candidates_tokens["input_ids"].size()
         query_embeds = self.encoder.get_emb(query_tokens["input_ids"], query_tokens["attention_mask"])
-        
+
+
         candidates_tokens["input_ids"] = candidates_tokens["input_ids"].view(batch_size * topk, max_length)
         candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].view(batch_size * topk, max_length)
         candidates_embs = self.encoder.get_emb(candidates_tokens["input_ids"], candidates_tokens["attention_mask"])
@@ -265,6 +273,7 @@ class MyModel(nn.Module):
         query_embeds = query_embeds.unsqueeze(1) # [batch_size, 1, hidden]
 
         score = torch.bmm(query_embeds, candidates_embs.transpose(1, 2)).squeeze(1)
+        del candidates_embs, query_embeds
         return score
     
     def get_loss(self, outputs, targets):
@@ -322,7 +331,7 @@ def main():
             
             if use_cuda:
                 with torch.cuda.amp.autocast():
-                    batch_y_pred = my_model(batch_x)  
+                    batch_y_pred = my_model(batch_x)
                     loss = my_model.get_loss(batch_y_pred, batch_y)
                 scaler.scale(loss).backward()
                 scaler.step(my_model.optimizer)
