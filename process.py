@@ -49,7 +49,9 @@ class TokensPaths():
         self.query_cuis_path = paths[query_paths_key]['ids']
         
         self.query_shape = load_mmap_shape(paths[query_paths_key]['meta'])
-        
+
+
+
 class MyFaiss():
     def __init__(self,tokens_paths, cands_num, encoder, use_cuda, device):
         self.cands_num = cands_num
@@ -288,7 +290,7 @@ def main():
 
     my_model = MyModel(encoder, learning_rate, weight_decay, use_cuda)
 
-    scaler = torch.cuda.amp.GradScaler(enabled=use_cuda)
+    scaler = torch.amp.GradScaler(device="cuda", enabled=use_cuda)
 
 
 
