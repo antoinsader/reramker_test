@@ -7,12 +7,12 @@
 
 set -e
 
-# git clone https://github.com/antoinsader/biosyn.git
+# git clone https://github.com/antoinsader/reramker_test.git
 
 
 
 
-TARGET_DIR="data/data-ncbi-fair"
+TARGET_DIR="data/raw"
 
 mkdir -p "$TARGET_DIR"
 
