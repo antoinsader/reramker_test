@@ -17,13 +17,13 @@ TARGET_DIR="data/raw"
 mkdir -p "$TARGET_DIR"
 
 echo 'USING LG DATASET'
-unzip -o train_dictionary_lg.zip -d  "$TARGET_DIR"
-unzip -o traindev_lg.zip -d "$TARGET_DIR"
+unzip -o train_dictionary.zip -d  "$TARGET_DIR"
+unzip -o traindev_.zip -d "$TARGET_DIR"
+# unzip -o test.zip -d "$TARGET_DIR"
 
 
 
 
-unzip -o test.zip -d "$TARGET_DIR"
 
 echo "Files successfully extracted to $TARGET_DIR"
 
