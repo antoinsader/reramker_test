@@ -30,8 +30,8 @@ num_epochs = 5
 
 cands_num = 5
 train_batch_size = 32
-build_faiss_batch_size = 90000
-search_faiss_batch_size = 90000
+build_faiss_batch_size = 40000
+search_faiss_batch_size = 40000
 
 learning_rate = 0.0001
 weight_decay=0.01
