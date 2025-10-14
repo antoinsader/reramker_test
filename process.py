@@ -111,14 +111,14 @@ class MyFaiss():
             for start in tqdm(range(0, N,batch_size), desc="Building faiss index"):
                 end = min(start + batch_size, N)
                 batch_idxs = self.last_epoch_candidates_idxs[start:end]
-                
+
                 inp  = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
                 att = torch.as_tensor(dictionary_att[batch_idxs],device=self.device)
                 embs = self.encoder.get_emb(inp, att)
                 embs = F.normalize(embs, p=2, dim=1)
                 embs_np = embs.cpu().detach().numpy().astype(np.float32)
 
-                self.faiss_index.remove_ids(faiss.IDSelectorBatch(batch_idxs))
+                self.faiss_index.remove_ids(batch_idxs)
                 self.faiss_index.add_with_ids(embs_np, batch_idxs)
 
                 del inp, att, embs_np
