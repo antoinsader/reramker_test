@@ -145,7 +145,7 @@ class MyFaiss():
         (tokens_size, max_length ) = self.tokens_paths.query_shape
         N = tokens_size
         candidates = np.zeros((N,self.cands_num))
-        faiss_index = self.get_gpu_index()
+        faiss_index = self.faiss_index
         with torch.inference_mode():
             for start in range(0, N,batch_size):
                 end = min(start + batch_size, N)
