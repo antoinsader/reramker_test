@@ -16,7 +16,7 @@ from tqdm import tqdm
 import gc
 
 from transformers import AutoModel
-from config import paths, cands_num, train_batch_size, learning_rate, encoder_model_name, weight_decay, num_workers,build_faiss_batch_size, num_epochs, search_faiss_batch_size
+from config import paths, cands_num, train_batch_size, learning_rate, encoder_model_name, weight_decay, num_workers,build_faiss_batch_size, num_epochs, search_faiss_batch_size, dict_embs_npy
 from utils import info_nce_loss, load_mmap_shape, marginal_nll
 
 
@@ -66,7 +66,7 @@ class MyFaiss():
     def set_last_epoch_candidates_idxs(self, cands_idxs):
         self.last_epoch_candidates_idxs = np.array(cands_idxs, dtype=np.int64).flatten()
 
-        
+
     def init_index(self, hidden_size):
         if self.use_cuda:
             gpu_resources = faiss.StandardGpuResources()
@@ -99,31 +99,32 @@ class MyFaiss():
 
         N = self.tokens_paths.dict_shape[0]
         hidden_size = self.encoder.encoder.config.hidden_size
+        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode="w+", shape=(N, hidden_size))
+        
         assert hidden_size is not None
 
-        if self.faiss_index is None:
-            self.init_index(hidden_size)
+        self.init_index(hidden_size)
 
         if self.last_epoch_candidates_idxs is None:
-            self.last_epoch_candidates_idxs = np.arange(N, dtype=np.int64)
+            embed_indices = np.arange(N)
+        else:
+            embed_indices = self.last_epoch_candidates_idxs
 
-        N = len(self.last_epoch_candidates_idxs)
+        M = len(embed_indices)
 
         with torch.inference_mode():
-            for start in tqdm(range(0, N,batch_size), desc="Building faiss index"):
-                end = min(start + batch_size, N)
-                batch_idxs = self.last_epoch_candidates_idxs[start:end]
+            for start in tqdm(range(0, M, batch_size), desc="Building faiss index"):
+                end = min(start + batch_size, M)
+                batch_idxs = embed_indices[start:end]
 
                 inp  = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
                 att = torch.as_tensor(dictionary_att[batch_idxs],device=self.device)
                 embs = self.encoder.get_emb(inp, att)
                 embs = F.normalize(embs, p=2, dim=1)
-                embs_np = embs.cpu().detach().numpy().astype(np.float32)
+                embeddings[batch_idxs] = embs.cpu().numpy()
+                del inp, att, embs
 
-                self.faiss_index.remove_ids(batch_idxs)
-                self.faiss_index.add_with_ids(embs_np, batch_idxs)
-
-                del inp, att, embs_np
+        self.faiss_index.add(np.array(embeddings))
         del dictionary_inputs, dictionary_att
         torch.cuda.empty_cache()
         gc.collect()

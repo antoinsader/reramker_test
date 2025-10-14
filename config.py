@@ -45,3 +45,9 @@ encoder_model_name = 'dmis-lab/biobert-base-cased-v1.1'
 
 dictionary_path = './data/raw/train_dictionary.txt'
 queries_dir = './data/raw/traindev'
+
+
+os.makedirs('./data/embeds', exist_ok=True)
+dict_embs_npy = './data/embeds/dict.npy'
+
+
