@@ -33,7 +33,7 @@ class MyEncoder():
             emb = self.encoder(input_ids=input_ids_tensor, attention_mask=atts_tensor)[0]  # token embeddings
             mask = atts_tensor.unsqueeze(-1).expand(emb.size()).float()
             embs = (emb * mask).sum(1) / mask.sum(1)  # mean pooling
-            
+
         return embs
 class TokensPaths():
     def __init__(self,dict_paths_key, query_paths_key):
@@ -255,7 +255,7 @@ class MyModel(nn.Module):
 
         if self.use_cuda:
             candidates_tokens["input_ids"] = candidates_tokens["input_ids"].to("cuda", non_blocking=True)
-            candidates_tokens["input_ids"] = candidates_tokens["input_ids"].to("cuda", non_blocking=True)
+            candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].to("cuda", non_blocking=True)
             query_tokens["input_ids"] = query_tokens["input_ids"].to("cuda", non_blocking=True)
             query_tokens["attention_mask"] = query_tokens["attention_mask"].to("cuda", non_blocking=True)
             
@@ -330,7 +330,7 @@ def main():
             my_model.optimizer.zero_grad(set_to_none=True)
             
             if use_cuda:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast("cuda"):
                     batch_y_pred = my_model(batch_x)
                     loss = my_model.get_loss(batch_y_pred, batch_y)
                 scaler.scale(loss).backward()
