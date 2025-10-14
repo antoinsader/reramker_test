@@ -66,7 +66,8 @@ class MyFaiss():
     def set_last_epoch_candidates_idxs(self, cands_idxs):
         self.last_epoch_candidates_idxs = np.array(cands_idxs, dtype=np.int64).flatten()
 
-    def get_gpu_index(self):
+        
+    def init_index(self, hidden_size):
         if self.use_cuda:
             gpu_res = faiss.StandardGpuResources()
             gpu_res.setTempMemory(512 * 1024 * 1024)  # 512 MB
@@ -76,15 +77,12 @@ class MyFaiss():
 
             gpu_index = faiss.index_cpu_to_gpu(gpu_res, 0, self.faiss_index, options)
             print(f"GPU INDEX")
-            return gpu_index
-
-        return self.faiss_index    
-
-    def init_index(self, hidden_size):
-        base_index = faiss.IndexFlatIP(hidden_size)
-        self.faiss_index = faiss.IndexIDMap(base_index)
+            self.faiss_index
+            return True
+        self.faiss_index = faiss.IndexFlatIP(hidden_size) 
         return True
-         
+
+
     def build_faiss(self, batch_size):
         dictionary_inputs = np.memmap(
                 self.tokens_paths.dict_inp_path,
