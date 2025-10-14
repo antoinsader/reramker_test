@@ -69,11 +69,14 @@ class MyFaiss():
     def get_gpu_index(self):
         if self.use_cuda:
             gpu_res = faiss.StandardGpuResources()
-            gpu_res.setTempMemory(512 * 1024 * 1024)  # 512 MB temporary memory buffer
-            gpu_index_flat_config = faiss.GpuIndexFlatConfig()
-            gpu_index_flat_config.useFloat16 = True   # faster, minor precision loss
-            gpu_index_flat_config.device = 0
-            return faiss.index_cpu_to_gpu(gpu_res, 0, self.faiss_index, gpu_index_flat_config)
+            gpu_res.setTempMemory(512 * 1024 * 1024)  # 512 MB
+            options = faiss.GpuClonerOptions()
+            options.useFloat16 = True  # faster, minor precision loss
+            options.useFloat16CoarseQuantizer = False
+
+            gpu_index = faiss.index_cpu_to_gpu(gpu_res, 0, self.faiss_index, options)
+            return gpu_index
+
         return self.faiss_index    
 
     def init_index(self, hidden_size):
