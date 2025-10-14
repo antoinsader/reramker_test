@@ -18,7 +18,7 @@ mkdir -p "$TARGET_DIR"
 
 echo 'USING LG DATASET'
 unzip -o train_dictionary.zip -d  "$TARGET_DIR"
-unzip -o traindev_.zip -d "$TARGET_DIR"
+unzip -o traindev.zip -d "$TARGET_DIR"
 # unzip -o test.zip -d "$TARGET_DIR"
 
 
