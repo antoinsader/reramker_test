@@ -33,9 +33,10 @@ def marginal_nll(score, target):
 
 
 def info_nce_loss(scores,targets):
-    logits = F.log_softmax(scores, dim=-1)
-    loss = -(logits * targets).sum(dim=1)
-    return loss.mean()
+    # logits = F.log_softmax(scores, dim=-1)
+    # loss = -(logits * targets).sum(dim=1)
+    # return loss.mean()
+    return F.cross_entropy(scores, targets, ignore_index=-100)
 
 
 def get_labels(cand_cuis, query_cui):
