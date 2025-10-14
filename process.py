@@ -18,7 +18,7 @@ import gc
 from transformers import AutoModel
 from config import paths, cands_num, train_batch_size, learning_rate, encoder_model_name, weight_decay, num_workers,build_faiss_batch_size, num_epochs, search_faiss_batch_size, dict_embs_npy, loss_type
 from config import normalize_query_faiss_search, normalize_query_forward, normalize_candidates_forward
-from utils import get_labels, info_nce_loss, load_mmap_shape, marginal_nll
+from utils import compute_metrics, get_labels, info_nce_loss, load_mmap_shape, marginal_nll
 
 
 
@@ -318,12 +318,6 @@ def main():
 
 
 
-    # num_classes = cands_num
-    # acc5 = MulticlassAccuracy(num_classes=num_classes, top_k=5)
-    # acc5 = acc5.to(device)
-    # mrr = RetrievalMRR()
-
-    
     num_training_steps = len(my_ds) // train_batch_size * num_epochs
     num_warmup_steps = int(0.1 * num_training_steps)
 
@@ -345,12 +339,12 @@ def main():
             pin_memory=use_cuda, 
             num_workers=num_workers,
             persistent_workers=True)
-        
 
         train_loss, train_steps = 0.0, 0
+        epoch_acc, epoch_mrr = 0.0, 0.0
+        n_eval = 0
         for i, (batch_x, batch_y) in tqdm(enumerate(my_loader), total=len(my_loader), desc="training batches", unit="batch" ):
             my_model.optimizer.zero_grad(set_to_none=True)
-            
             if use_cuda:
                 with torch.amp.autocast("cuda"):
                     batch_y_pred = my_model(batch_x)
@@ -364,36 +358,24 @@ def main():
                 loss = my_model.get_loss(batch_y_pred, batch_y) 
                 loss.backward()
                 my_model.optimizer.step()
-        
             train_loss += loss.item()
             train_steps += 1
+            
+            acc_k, mrr = compute_metrics(batch_y_pred.detach().cpu(), batch_y.cpu(), k=5)
+            epoch_acc += acc_k
+            epoch_mrr += mrr
+            n_eval += 1
             if i % 100 == 0:
                 print(f"Step {i}: LR = {scheduler.get_last_lr()[0]:.6f}")
 
 
-            # batch_y_pred = batch_y_pred.to(device)
-            # batch_y = batch_y.to(device) if isinstance(batch_y, torch.Tensor) else batch_y
-            # batch_indexes = torch.arange(start=i*train_batch_size, 
-            #                  end=i*train_batch_size + batch_y_pred.size(0),
-            #                  device=batch_y_pred.device)
-            # batch_indexes = batch_indexes.unsqueeze(1).expand_as(batch_y_pred)
-            # mrr.update(batch_y_pred, batch_y.int(), batch_indexes)
-            # target = batch_y.argmax(dim=1) 
-            # acc5.update(batch_y_pred, target)
             del batch_x, batch_y, batch_y_pred
 
-        # acc5 = acc5.compute()  # Returns a tensor
-        # mrr = mrr.compute()
         train_loss /= (train_steps + 1e-9)
 
-        print(f"Epoch {epoch}  avg_train_loss: {train_loss}")
-        # acc5.reset()  # Reset for next epoch
-        # mrr.reset()
-        
+        print(f"Epoch {epoch}: avg_train_loss={train_loss:.5f}, acc@5={epoch_acc/n_eval:.5f}, mrr={epoch_mrr/n_eval:.5f}")
         torch.cuda.empty_cache()
         gc.collect()
-        
-
 
 
 if __name__ == "__main__":
