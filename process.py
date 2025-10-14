@@ -69,17 +69,17 @@ class MyFaiss():
         
     def init_index(self, hidden_size):
         if self.use_cuda:
-            gpu_res = faiss.StandardGpuResources()
-            gpu_res.setTempMemory(512 * 1024 * 1024)  # 512 MB
-            options = faiss.GpuClonerOptions()
-            options.useFloat16 = True  # faster, minor precision loss
-            options.useFloat16CoarseQuantizer = False
+            gpu_resources = faiss.StandardGpuResources()
+            #Index configurations
+            index_conf = faiss.GpuIndexFlatConfig()
+            index_conf.device = torch.cuda.current_device()
+            index_conf.useFloat16 = bool(self.use_cuda)
 
-            gpu_index = faiss.index_cpu_to_gpu(gpu_res, 0, self.faiss_index, options)
-            print(f"GPU INDEX")
-            self.faiss_index
-            return True
-        self.faiss_index = faiss.IndexFlatIP(hidden_size) 
+            #make the index (this index is on gpu)
+            self.faiss_index = faiss.GpuIndexFlatIP(gpu_resources, hidden_size, index_conf)
+        else:
+            #make normal cpu index 
+            self.faiss_index = faiss.IndexFlatIP(hidden_size)
         return True
 
 
