@@ -27,7 +27,7 @@ class MyEncoder():
         self.encoder = encoder
         if self.use_cuda:
             self.encoder = self.encoder.to("cuda")
-            self.encoder = torch.compile(self.encoder)
+            # self.encoder = torch.compile(self.encoder)
     def get_emb(self, input_ids_tensor, atts_tensor):
         with torch.amp.autocast(device_type="cuda",enabled=self.use_cuda):
             emb = self.encoder(input_ids=input_ids_tensor, attention_mask=atts_tensor)[0]  # token embeddings
