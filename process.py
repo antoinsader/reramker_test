@@ -269,7 +269,7 @@ class MyModel(nn.Module):
     
 def main():
 
-    model = AutoModel.from_pretrained(encoder_model_name)
+    model = AutoModel.from_pretrained(encoder_model_name, use_safetensors=True)
     # model = SentenceTransformer("all-MiniLM-L6-v2")
     # transformer = model._first_module().auto_model  # the underlying Hugging Face model
 
