@@ -75,6 +75,7 @@ class MyFaiss():
             options.useFloat16CoarseQuantizer = False
 
             gpu_index = faiss.index_cpu_to_gpu(gpu_res, 0, self.faiss_index, options)
+            print(f"GPU INDEX")
             return gpu_index
 
         return self.faiss_index    
@@ -283,6 +284,7 @@ def main():
 
 
     use_cuda = torch.cuda.is_available()
+    print(f"use cuda: {use_cuda}" )
     device = torch.device("cuda" if use_cuda else 'cpu')
 
 
