@@ -1,22 +1,22 @@
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
-import os
 import torch
 from torch.utils.data import Dataset
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import random
 import faiss.contrib.torch_utils
 from torchmetrics.classification import MulticlassAccuracy
 from torchmetrics.retrieval import RetrievalMRR
+from transformers import get_linear_schedule_with_warmup
+
 
 from tqdm import tqdm
 import gc
 
 from transformers import AutoModel
-from config import paths, cands_num, train_batch_size, learning_rate, encoder_model_name, weight_decay, num_workers,build_faiss_batch_size, num_epochs, search_faiss_batch_size, dict_embs_npy
+from config import paths, cands_num, train_batch_size, learning_rate, encoder_model_name, weight_decay, num_workers,build_faiss_batch_size, num_epochs, search_faiss_batch_size, dict_embs_npy, loss_type
 from utils import info_nce_loss, load_mmap_shape, marginal_nll
 
 
@@ -28,11 +28,18 @@ class MyEncoder():
         if self.use_cuda:
             self.encoder = self.encoder.to("cuda")
             # self.encoder = torch.compile(self.encoder)
-    def get_emb(self, input_ids_tensor, atts_tensor):
-        with torch.amp.autocast(device_type="cuda",enabled=self.use_cuda):
-            emb = self.encoder(input_ids=input_ids_tensor, attention_mask=atts_tensor)[0]  # token embeddings
-            mask = atts_tensor.unsqueeze(-1).expand(emb.size()).float()
-            embs = (emb * mask).sum(1) / mask.sum(1)  # mean pooling
+    def get_emb(self, input_ids_tensor, atts_tensor, use_amp=False, use_inference=False):
+
+        if use_inference:
+            with torch.inference_mode():
+                with torch.amp.autocast(device_type="cuda",enabled=(self.use_cuda and use_amp)):
+                    emb = self.encoder(input_ids=input_ids_tensor, attention_mask=atts_tensor)[0]  # token embeddings
+        else:
+            with torch.amp.autocast(device_type="cuda",enabled=(self.use_cuda and use_amp)):
+                emb = self.encoder(input_ids=input_ids_tensor, attention_mask=atts_tensor)[0]  # token embeddings
+
+        mask = atts_tensor.unsqueeze(-1).expand(emb.size()).float()
+        embs = (emb * mask).sum(1) / mask.sum(1)  # mean pooling
 
         return embs
 class TokensPaths():
@@ -102,8 +109,8 @@ class MyFaiss():
         embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode="w+", shape=(N, hidden_size))
         
         assert hidden_size is not None
-
-        self.init_index(hidden_size)
+        if self.faiss_index is None:
+            self.init_index(hidden_size)
 
         if self.last_epoch_candidates_idxs is None:
             embed_indices = np.arange(N)
@@ -112,19 +119,21 @@ class MyFaiss():
 
         M = len(embed_indices)
 
-        with torch.inference_mode():
-            for start in tqdm(range(0, M, batch_size), desc="Building faiss index"):
-                end = min(start + batch_size, M)
-                batch_idxs = embed_indices[start:end]
+        for start in tqdm(range(0, M, batch_size), desc="Building faiss index"):
+            end = min(start + batch_size, M)
+            batch_idxs = embed_indices[start:end]
 
-                inp  = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
-                att = torch.as_tensor(dictionary_att[batch_idxs],device=self.device)
-                embs = self.encoder.get_emb(inp, att)
-                embs = F.normalize(embs, p=2, dim=1)
-                embeddings[batch_idxs] = embs.cpu().numpy()
-                del inp, att, embs
+            inp  = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
+            att = torch.as_tensor(dictionary_att[batch_idxs],device=self.device)
+            embs = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
+            embs = F.normalize(embs, p=2, dim=1)
+            embeddings[batch_idxs] = embs.cpu().numpy()
+            del inp, att, embs
 
+
+        self.faiss_index.reset()
         self.faiss_index.add(np.array(embeddings))
+        embeddings.flush()
         del dictionary_inputs, dictionary_att
         torch.cuda.empty_cache()
         gc.collect()
@@ -147,21 +156,20 @@ class MyFaiss():
         N = tokens_size
         candidates = np.zeros((N,self.cands_num))
         faiss_index = self.faiss_index
-        with torch.inference_mode():
-            for start in range(0, N,batch_size):
-                end = min(start + batch_size, N)
-                inp  = torch.as_tensor(query_inputs[start:end], device=self.device)
-                att = torch.as_tensor(query_att[start:end],device=self.device)
-                embs = self.encoder.get_emb(inp, att)
-                embs = F.normalize(embs, p=2, dim=1)
-                if self.use_cuda:
-                    embs = embs.contiguous()
-                else:
-                    embs = embs.cpu().numpy().astype(np.float32)
+        for start in range(0, N,batch_size):
+            end = min(start + batch_size, N)
+            inp  = torch.as_tensor(query_inputs[start:end], device=self.device)
+            att = torch.as_tensor(query_att[start:end],device=self.device)
+            embs = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
+            embs = F.normalize(embs, p=2, dim=1)
+            if self.use_cuda:
+                embs = embs.contiguous()
+            else:
+                embs = embs.cpu().numpy().astype(np.float32)
 
-                _, chunk_cand_idxs = faiss_index.search(embs, self.cands_num)
-                candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
-                del inp, att, embs
+            _, chunk_cand_idxs = faiss_index.search(embs, self.cands_num)
+            candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
+            del inp, att, embs
 
         del query_inputs, query_att
         gc.collect()        
@@ -176,8 +184,6 @@ class MyDataset(Dataset):
         self.all_candidates_idxs = None
         self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
         self.dict_cuis  = np.load(self.tokens_paths.dict_cuis_path)
-        
-        
         self.query_inputs = np.memmap(
                 self.tokens_paths.query_inp_path,
                 mode="r+",
@@ -203,15 +209,12 @@ class MyDataset(Dataset):
                 dtype=np.int32,
                 shape=self.tokens_paths.dict_shape
             )
-        
 
-        
-        
     def __len__(self,):
         return len(self.query_inputs)
-    
+
     def set_candidates(self,cands):
-        self.all_candidates_idxs = torch.from_numpy(cands.astype(np.int64))
+        self.all_candidates_idxs = torch.as_tensor(cands, dtype=torch.long)
     def __getitem__(self, query_idx):
         assert self.all_candidates_idxs is not None
         query_tokens = {
@@ -225,11 +228,13 @@ class MyDataset(Dataset):
             "input_ids": self.dictionary_inputs[candidate_idxs],
             "attention_mask": self.dictionary_att[candidate_idxs],
         }
-        
+
         query_cui = self.query_cuis[query_idx]
         candidates_cuis = np.array(self.dict_cuis)[candidate_idxs]
-        labels = (candidates_cuis == query_cui).astype(np.float32)
+        # labels = (candidates_cuis == query_cui).astype(np.float32)
+        labels = get_labels(candidates_cuis, query_cui)
         
+
         return (query_tokens, candidate_tokens), labels
 
 
@@ -248,7 +253,7 @@ class MyModel(nn.Module):
             fused=self.use_cuda
         )
 
-        self.criterion = info_nce_loss
+        self.criterion = info_nce_loss if loss_type == 'info_nce_loss' else marginal_nll
     
     def forward(self, x_batch):
         query_tokens, candidates_tokens = x_batch
@@ -260,12 +265,12 @@ class MyModel(nn.Module):
             query_tokens["attention_mask"] = query_tokens["attention_mask"].to("cuda", non_blocking=True)
             
         batch_size, topk, max_length = candidates_tokens["input_ids"].size()
-        query_embeds = self.encoder.get_emb(query_tokens["input_ids"], query_tokens["attention_mask"])
+        query_embeds = self.encoder.get_emb(query_tokens["input_ids"], query_tokens["attention_mask"], use_amp=True, use_inference=False)
 
 
         candidates_tokens["input_ids"] = candidates_tokens["input_ids"].view(batch_size * topk, max_length)
         candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].view(batch_size * topk, max_length)
-        candidates_embs = self.encoder.get_emb(candidates_tokens["input_ids"], candidates_tokens["attention_mask"])
+        candidates_embs = self.encoder.get_emb(candidates_tokens["input_ids"], candidates_tokens["attention_mask"], use_amp=True, use_inference=False)
         candidates_embs = F.normalize(candidates_embs, p=2, dim=1)
         candidates_embs = candidates_embs.view(batch_size, topk, -1)
 
@@ -312,6 +317,15 @@ def main():
     # acc5 = acc5.to(device)
     # mrr = RetrievalMRR()
 
+    
+    num_training_steps = len(my_ds) // train_batch_size * num_epochs
+    num_warmup_steps = int(0.1 * num_training_steps)
+
+    scheduler = get_linear_schedule_with_warmup(
+        my_model.optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps
+    )
 
     for epoch in range(num_epochs):
         my_faiss.build_faiss(build_faiss_batch_size)
@@ -325,6 +339,8 @@ def main():
             pin_memory=use_cuda, 
             num_workers=num_workers,
             persistent_workers=True)
+        
+
         train_loss, train_steps = 0.0, 0
         for i, (batch_x, batch_y) in tqdm(enumerate(my_loader), total=len(my_loader), desc="training batches", unit="batch" ):
             my_model.optimizer.zero_grad(set_to_none=True)
@@ -336,6 +352,7 @@ def main():
                 scaler.scale(loss).backward()
                 scaler.step(my_model.optimizer)
                 scaler.update()
+                scheduler.step()
             else:
                 batch_y_pred = my_model(batch_x)  
                 loss = my_model.get_loss(batch_y_pred, batch_y) 
@@ -344,6 +361,9 @@ def main():
         
             train_loss += loss.item()
             train_steps += 1
+            if i % 100 == 0:
+                print(f"Step {i}: LR = {scheduler.get_last_lr()[0]:.6f}")
+
 
             # batch_y_pred = batch_y_pred.to(device)
             # batch_y = batch_y.to(device) if isinstance(batch_y, torch.Tensor) else batch_y
@@ -355,8 +375,6 @@ def main():
             # target = batch_y.argmax(dim=1) 
             # acc5.update(batch_y_pred, target)
             del batch_x, batch_y, batch_y_pred
-            if use_cuda:
-                torch.cuda.empty_cache()
 
         # acc5 = acc5.compute()  # Returns a tensor
         # mrr = mrr.compute()

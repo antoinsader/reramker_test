@@ -51,3 +51,5 @@ os.makedirs('./data/embeds', exist_ok=True)
 dict_embs_npy = './data/embeds/dict.npy'
 
 
+loss_type = 'info_nce_loss'
+# loss_type = 'marginal_nll'
