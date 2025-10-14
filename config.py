@@ -25,7 +25,6 @@ last_dictionary_embeding_np_file = "./data/dict_embs_cache/d.npy"
 
 
 max_length = 25
-num_epochs = 5
 
 
 cands_num = 5
@@ -51,5 +50,11 @@ os.makedirs('./data/embeds', exist_ok=True)
 dict_embs_npy = './data/embeds/dict.npy'
 
 
-loss_type = 'info_nce_loss'
-# loss_type = 'marginal_nll'
+num_epochs = 10
+# loss_type = 'info_nce_loss'
+loss_type = 'marginal_nll'
+normalize_query_faiss_search = True
+normalize_query_forward = False
+normalize_candidates_forward = False
+
+

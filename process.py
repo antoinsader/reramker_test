@@ -17,6 +17,7 @@ import gc
 
 from transformers import AutoModel
 from config import paths, cands_num, train_batch_size, learning_rate, encoder_model_name, weight_decay, num_workers,build_faiss_batch_size, num_epochs, search_faiss_batch_size, dict_embs_npy, loss_type
+from config import normalize_query_faiss_search, normalize_query_forward, normalize_candidates_forward
 from utils import get_labels, info_nce_loss, load_mmap_shape, marginal_nll
 
 
@@ -161,7 +162,8 @@ class MyFaiss():
             inp  = torch.as_tensor(query_inputs[start:end], device=self.device)
             att = torch.as_tensor(query_att[start:end],device=self.device)
             embs = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
-            embs = F.normalize(embs, p=2, dim=1)
+            if normalize_query_faiss_search:
+                embs = F.normalize(embs, p=2, dim=1)
             if self.use_cuda:
                 embs = embs.contiguous()
             else:
@@ -271,10 +273,14 @@ class MyModel(nn.Module):
         candidates_tokens["input_ids"] = candidates_tokens["input_ids"].view(batch_size * topk, max_length)
         candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].view(batch_size * topk, max_length)
         candidates_embs = self.encoder.get_emb(candidates_tokens["input_ids"], candidates_tokens["attention_mask"], use_amp=True, use_inference=False)
-        candidates_embs = F.normalize(candidates_embs, p=2, dim=1)
-        candidates_embs = candidates_embs.view(batch_size, topk, -1)
 
-        query_embeds = F.normalize(query_embeds, p=2, dim=1)
+        if normalize_candidates_forward:
+            candidates_embs = F.normalize(candidates_embs, p=2, dim=1)
+
+
+        candidates_embs = candidates_embs.view(batch_size, topk, -1)
+        if normalize_query_forward:
+            query_embeds = F.normalize(query_embeds, p=2, dim=1)
         query_embeds = query_embeds.unsqueeze(1) # [batch_size, 1, hidden]
 
         score = torch.bmm(query_embeds, candidates_embs.transpose(1, 2)).squeeze(1)
