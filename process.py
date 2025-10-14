@@ -160,7 +160,7 @@ class MyFaiss():
                     embs = embs.cpu().numpy().astype(np.float32)
 
                 _, chunk_cand_idxs = faiss_index.search(embs, self.cands_num)
-                candidates[start:end] = chunk_cand_idxs
+                candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
                 del inp, att, embs
 
         del query_inputs, query_att
