@@ -17,7 +17,7 @@ import gc
 
 from transformers import AutoModel
 from config import paths, cands_num, train_batch_size, learning_rate, encoder_model_name, weight_decay, num_workers,build_faiss_batch_size, num_epochs, search_faiss_batch_size, dict_embs_npy, loss_type
-from utils import info_nce_loss, load_mmap_shape, marginal_nll
+from utils import get_labels, info_nce_loss, load_mmap_shape, marginal_nll
 
 
 
@@ -126,7 +126,7 @@ class MyFaiss():
             inp  = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
             att = torch.as_tensor(dictionary_att[batch_idxs],device=self.device)
             embs = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
-            embs = F.normalize(embs, p=2, dim=1)
+            # embs = F.normalize(embs, p=2, dim=1)
             embeddings[batch_idxs] = embs.cpu().numpy()
             del inp, att, embs
 
