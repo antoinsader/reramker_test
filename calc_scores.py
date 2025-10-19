@@ -10,7 +10,8 @@ batch_x  = get_pkl("./data/draft/batch_x.pkl")
 batch_y  = get_pkl("./data/draft/batch_y.pkl")
 batch_y_pred  = get_pkl("./data/draft/batch_y_pred.pkl")
 
-
+batch_y = batch_y.to("cuda")
+batch_y_pred = batch_y_pred.to("cuda")
 
 query_tokens, candidate_tokens= batch_x
 

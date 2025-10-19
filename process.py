@@ -639,11 +639,11 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
     tokens_paths = TokensPaths("dict", "test")
     my_ds = MyDataset(tokens_paths, args.topk)
     my_faiss = MyFaiss(
-        tokens_paths=tokens_paths, 
-        topk= args.topk, 
-        encoder=encoder, 
-        faiss_index_name=args.faiss_index_name, 
-        use_cuda = use_cuda, 
+        tokens_paths=tokens_paths,
+        topk= args.topk,
+        encoder=encoder,
+        faiss_index_name=args.faiss_index_name,
+        use_cuda = use_cuda,
         device=device
     )
 
@@ -668,12 +668,13 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
     n_eval = 0
     with torch.inference_mode(), torch.amp.autocast("cuda", enabled=use_cuda):
         for batch_x, batch_y in tqdm(eval_loader, desc="Evaluating"):
-            batch_x = {k: v.to(device) for k, v in batch_x.items()}
+
             batch_y = batch_y.to(device)
             batch_size = batch_y.size(0)
 
 
             query_tokens, candidate_tokens = batch_x
+
             query_tokens = {k: v.to(device) for k, v in query_tokens.items()}
             candidate_tokens = {k: v.to(device) for k, v in candidate_tokens.items()}
             batch_x = (query_tokens, candidate_tokens)
@@ -712,4 +713,6 @@ if __name__ == "__main__":
 
 
 # python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=48 --loss_type='info_nce_loss'
+# python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=16 --loss_type='info_nce_loss' --num_epochs=1
+
 
