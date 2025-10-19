@@ -253,6 +253,7 @@ class MyFaiss():
                 torch.cuda.empty_cache()
             index.train(samples_embeds)
             LOGGER.info("Training clusters finsihed ")
+            self.faiss_index = index
             del samples_embeds
             torch.cuda.empty_cache()
             return True
@@ -290,7 +291,7 @@ class MyFaiss():
         N = self.tokens_paths.dict_shape[0]
         hidden_size = self.encoder.encoder.config.hidden_size
         embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode="w+", shape=(N, hidden_size))
-        
+
         assert hidden_size is not None
         if self.faiss_index is None:
             self.init_index(hidden_size, N)
@@ -300,8 +301,9 @@ class MyFaiss():
         else:
             embed_indices = self.last_epoch_candidates_idxs
 
+        assert self.faiss_index is not None
         M = len(embed_indices)
-
+        self.faiss_index.reset()
         for start in tqdm(range(0, M, batch_size), desc="Building faiss index"):
             end = min(start + batch_size, M)
             batch_idxs = embed_indices[start:end]
@@ -313,9 +315,8 @@ class MyFaiss():
             embeddings[batch_idxs] = embs.cpu().numpy()
             del inp, att, embs
 
-
-        self.faiss_index.reset()
         self.faiss_index.add(np.array(embeddings))
+
         embeddings.flush()
         del dictionary_inputs, dictionary_att
         torch.cuda.empty_cache()
