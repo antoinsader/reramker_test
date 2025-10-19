@@ -378,13 +378,14 @@ class MyDataset(Dataset):
                 dtype=np.int32,
                 shape=self.tokens_paths.query_shape
             )
+
         self.query_att = np.memmap(
                 self.tokens_paths.query_att_path,
                 mode="r",
                 dtype=np.int32,
                 shape=self.tokens_paths.query_shape
             )
-    
+
         self.dictionary_inputs = np.memmap(
                 self.tokens_paths.dict_inp_path,
                 mode="r",
@@ -587,7 +588,7 @@ def train(use_cuda, device, lg, args):
                 my_model.optimizer.step()
             train_loss += loss.item()
             train_steps += 1
-            
+
             os.makedirs("./data/draft",  exist_ok=True)
             save_pkl(batch_x, "./data/draft/batch_x.pkl")
             save_pkl(batch_y, "./data/draft/batch_y.pkl")
