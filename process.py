@@ -637,7 +637,7 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
     model = AutoModel.from_pretrained(result_encoder_dir, use_safetensors=True)
     encoder = MyEncoder(model, use_cuda)
     tokens_paths = TokensPaths("dict", "test")
-    my_ds = MyDataset(tokens_paths, args.topk)
+    my_ds = MyDataset(tokens_paths, args.topk, loss_type=args.loss_type)
     my_faiss = MyFaiss(
         tokens_paths=tokens_paths,
         topk= args.topk,
