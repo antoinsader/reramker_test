@@ -707,9 +707,13 @@ if __name__ == "__main__":
     device = torch.device("cuda" if use_cuda else 'cpu')
     lg = MyLogger(LOGGER, use_cuda, global_log_path=config.global_log_path, logs_dir=config.logs_dir, tag="train")
 
+
+
     if not args.skip_train:
         result_encoder_dir = train(use_cuda, device, lg, args)
     if not args.skip_eval:
+        result_encoder_dir = result_encoder_dir if result_encoder_dir is not None else args.encoder_to_eval
+        assert result_encoder_dir is not None, f"encoder_to_eval should be specified" 
         eval(use_cuda, device, lg, result_encoder_dir, args)
 
 
