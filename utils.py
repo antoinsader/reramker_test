@@ -32,10 +32,8 @@ def marginal_nll(score, target):
     return loss
 
 
-def info_nce_loss(scores,targets):
-    # logits = F.log_softmax(scores, dim=-1)
-    # loss = -(logits * targets).sum(dim=1)
-    # return loss.mean()
+def info_nce_loss(scores,targets, temperature=0.07):
+    scores = scores / temperature
     return F.cross_entropy(scores, targets, ignore_index=-100)
 
 

@@ -63,10 +63,11 @@ weight_decay=0.01
 num_epochs = 10
 # loss_type = 'info_nce_loss'
 loss_type = 'marginal_nll'
-normalize_query_faiss_search = True
-normalize_query_forward = False
-normalize_candidates_forward = False
 
+normalize_query_faiss_search = True
+normalize_query_forward = True
+normalize_candidates_forward = True
+temperature = 0.07
 
 def parse_args():
     """
