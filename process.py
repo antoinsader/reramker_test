@@ -362,12 +362,12 @@ class MyFaiss():
 
 
 class MyDataset(Dataset):
-    def __init__(self,tokens_paths, topk):
+    def __init__(self,tokens_paths, topk, loss_type):
         self.tokens_paths  = tokens_paths
         self.topk = topk
         self.all_candidates_idxs = None
         self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
-
+        self.loss_type = loss_type
 
 
         self.dict_cuis  = np.load(self.tokens_paths.dict_cuis_path)
@@ -421,7 +421,7 @@ class MyDataset(Dataset):
         query_cui = self.query_cuis[query_idx] #1
         query_candidates_cuis = np.array(self.dict_cuis)[candidate_idxs] #(batch_size, topk)
         # labels = (candidates_cuis == query_cui).astype(np.float32)
-        labels = get_labels(query_candidates_cuis, query_cui) #if error_type == 'info_nce_loss', will return [batch_size] for each item is the first match, for marginal_nll error_type will return  (batch_size, topk) for each item 0 if false, 1 for true
+        labels = get_labels(query_candidates_cuis, query_cui, self.loss_type) #if error_type == 'info_nce_loss', will return [batch_size] for each item is the first match, for marginal_nll error_type will return  (batch_size, topk) for each item 0 if false, 1 for true
 
         return (query_tokens, candidate_tokens), labels
 
@@ -519,7 +519,7 @@ def train(use_cuda, device, lg, args):
         use_cuda = use_cuda, 
         device=device
     )
-    my_ds = MyDataset(tokens_paths, args.topk)
+    my_ds = MyDataset(tokens_paths, args.topk, loss_type=args.loss_type)
     my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda)
     scaler = torch.amp.GradScaler(device="cuda", enabled=use_cuda)
 

@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import numpy as np
 import pickle
 
-from config import loss_type
 
 
 
@@ -49,7 +48,7 @@ def info_nce_loss(scores,targets, temperature=0.07):
     return F.cross_entropy(scores, targets, ignore_index=-100)
 
 
-def get_labels(query_candidates_cuis, query_cui):
+def get_labels(query_candidates_cuis, query_cui, loss_type):
     """
         Generate labels for a query:
         - InfoNCE: integer index of first positive, -100 if no match
