@@ -249,7 +249,7 @@ class MyFaiss():
                 batch_embeds = batch_embeds.contiguous()
                 samples_embeds[cursor : cursor+(end-start)] = batch_embeds
                 cursor += (end -start)
-                del batch_embeds, inp, att, batch_att_mask
+                del batch_embeds, inp, att
                 torch.cuda.empty_cache()
             index.train(samples_embeds)
             LOGGER.info("Training clusters finsihed ")
