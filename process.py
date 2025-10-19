@@ -218,7 +218,7 @@ class MyFaiss():
             #train clusters on 320k random samples
             sample_size= 210_000
             sample_indices = torch.randperm(N)[:sample_size]
-            samples_batch_size = 32_000
+            samples_batch_size = 8_000
             samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
 
 
@@ -720,6 +720,7 @@ if __name__ == "__main__":
 
 
 # python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=48 --loss_type='info_nce_loss'
-# python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=16 --loss_type='info_nce_loss' --num_epochs=1
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=32 --loss_type='info_nce_loss' --build_faiss_batch_size=4096
+
 
 
