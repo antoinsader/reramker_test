@@ -115,6 +115,10 @@ def parse_args():
     parser.add_argument('--loss_type',
                         help='Either marginal_nll or info_nce_loss', default=loss_type)
 
+    parser.add_argument('--save_debug_pkls',  action="store_true")
+    parser.add_argument('--skip_train',  action="store_true")
+    parser.add_argument('--skip_eval',  action="store_true")
+
 
     args = parser.parse_args()
     return args

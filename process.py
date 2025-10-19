@@ -589,10 +589,11 @@ def train(use_cuda, device, lg, args):
             train_loss += loss.item()
             train_steps += 1
 
-            os.makedirs("./data/draft",  exist_ok=True)
-            save_pkl(batch_x, "./data/draft/batch_x.pkl")
-            save_pkl(batch_y, "./data/draft/batch_y.pkl")
-            save_pkl(batch_y_pred, "./data/draft/batch_y_pred.pkl")
+            if args.save_debug_pkls:
+                os.makedirs("./data/draft",  exist_ok=True)
+                save_pkl(batch_x, "./data/draft/batch_x.pkl")
+                save_pkl(batch_y, "./data/draft/batch_y.pkl")
+                save_pkl(batch_y_pred, "./data/draft/batch_y_pred.pkl")
 
             acc_k, mrr = compute_metrics(batch_y_pred.detach().cpu(), batch_y.cpu(), k=5)
             epoch_acc += acc_k
@@ -706,8 +707,10 @@ if __name__ == "__main__":
     device = torch.device("cuda" if use_cuda else 'cpu')
     lg = MyLogger(LOGGER, use_cuda, global_log_path=config.global_log_path, logs_dir=config.logs_dir, tag="train")
 
-    result_encoder_dir = train(use_cuda, device, lg, args)
-    eval(use_cuda, device, lg, result_encoder_dir, args)
+    if not args.skip_train:
+        result_encoder_dir = train(use_cuda, device, lg, args)
+    if not args.skip_eval:
+        eval(use_cuda, device, lg, result_encoder_dir, args)
 
 
 
