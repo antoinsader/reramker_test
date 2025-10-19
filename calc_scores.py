@@ -23,4 +23,5 @@ def info_nce_loss(scores,targets, temperature=0.07):
     scores = scores / temperature
     return F.cross_entropy(scores, targets, ignore_index=-100)
 
-info_nce_loss(batch_y_pred, batch_y)
+loss = info_nce_loss(batch_y_pred, batch_y)
+print(f"loss: {loss.item()}")
