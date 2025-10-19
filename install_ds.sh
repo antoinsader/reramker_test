@@ -33,7 +33,7 @@ source myenv/bin/activate
 pip install --upgrade pip
 pip install --index-url https://download.pytorch.org/whl/cu121 torch
 pip install faiss-gpu-cu12
-pip install tqdm transformers requests psutil
+pip install tqdm transformers requests psutil torchmetrics
 pip install datasets sentence_transformers
 
 echo "Setup complete!"

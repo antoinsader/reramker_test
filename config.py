@@ -75,12 +75,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description='ranker train')
 
     # Required
-    parser.add_argument('--model_name_or_path', required=True,
-                        help='Directory for pretrained model', default=encoder_model_name)
     parser.add_argument('--training_log_name', required=True,
                         help='Training log name')
     parser.add_argument('--faiss_index_name', type=str, required=True,
                         help='Either IndexHNSWFlat or IndexFlatIP')
+
+
+
+    # optional
+    parser.add_argument('--model_name_or_path',
+                        help='Directory for pretrained model', default=encoder_model_name)
 
     parser.add_argument('--train_batch_size',
                         help='train batch size',
