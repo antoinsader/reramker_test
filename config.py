@@ -83,7 +83,7 @@ def parse_args():
 
 
     # optional
-    parser.add_argument('--model_name_or_path',
+    parser.add_argument('--encoder_model_name',
                         help='Directory for pretrained model', default=encoder_model_name)
 
     parser.add_argument('--train_batch_size',
