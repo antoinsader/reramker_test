@@ -21,8 +21,6 @@ LOGGER = logging.getLogger()
 def parse_args():
     parser = argparse.ArgumentParser(description="splitting train file")
     #Required
-    parser.add_argument('--test_out_dir', required=True, type=str,
-                        help='Directory where you want the tokens of test queries to be saved')
 
 
     #optional
@@ -56,7 +54,6 @@ def main(args):
     queries_cuis_path = confs.paths["queries"]["ids"]
     queries_meta = confs.paths["queries"]["meta"]
 
-    os.makedirs(args.test_out_dir, exist_ok=True)
 
     test_queries_input_ids_mmap_path = confs.paths["test"]["inp"]
     test_queries_attention_mask_mmap_path = confs.paths["test"]["att"]
