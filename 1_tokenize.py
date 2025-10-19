@@ -5,7 +5,7 @@ from datasets import Dataset
 from functools import partial
 from transformers import AutoTokenizer
 
-from config import paths, max_length, tokenizer_name, dictionary_path, queries_dir
+from config import paths, max_length, tokenizer_name, dictionary_path, queries_dir, test_queries_dir
 
 from data import load_dictionary, load_queries
 
@@ -66,11 +66,18 @@ tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
 train_dictionary=load_dictionary(dictionary_path)
 train_queries = load_queries(queries_dir)
+test_queries = load_queries(test_queries_dir)
 
 
 dictionary_names, dictionary_cuis = [row[0] for row in train_dictionary], [row[1] for row in train_dictionary]
 query_names, query_cuis = [row[0] for row in train_queries], [row[1] for row in train_queries]
-    
+test_names, test_cuis = [row[0] for row in test_queries], [row[1] for row in test_queries]
+
+dictionary_cuis = [d.replace("MESH:", "") for d in dictionary_cuis]
+query_cuis = [d.replace("MESH:", "") for d in query_cuis]
+test_cuis = [d.replace("MESH:", "") for d in test_cuis]
+
 
 tt(dictionary_cuis, dictionary_names, 'dict', tokenizer)
 tt(query_cuis, query_names, 'queries', tokenizer)
+tt(test_cuis, test_names, 'test', tokenizer)

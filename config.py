@@ -1,4 +1,6 @@
+import argparse
 import os
+num_workers = 4
 
 
 tokens_dir = "./data/tokens"
@@ -17,6 +19,12 @@ paths = {
         "ids":  os.path.join(tokens_dir, "_d_ids.npy") ,
         "meta":  os.path.join(tokens_dir, "_d_meta.json")
         
+    },
+    "test": {
+        "inp": os.path.join(tokens_dir, "_t_inp.mmap"),
+        "att": os.path.join(tokens_dir, "_t_att.mmap") ,
+        "ids":  os.path.join(tokens_dir, "_t_ids.npy") ,
+        "meta":  os.path.join(tokens_dir, "_t_meta.json")
     }
 }
 
@@ -25,16 +33,8 @@ last_dictionary_embeding_np_file = "./data/dict_embs_cache/d.npy"
 
 
 max_length = 25
-
-
-cands_num = 5
-train_batch_size = 32
-build_faiss_batch_size = 10000
-search_faiss_batch_size = 10000
-
+train_batch_size = 16
 learning_rate = 0.0001
-weight_decay=0.01
-num_workers = 4
 
 # tokenizer_name = "sentence-transformers/all-MiniLM-L6-v2"
 tokenizer_name = 'dmis-lab/biobert-base-cased-v1.1'
@@ -44,12 +44,22 @@ encoder_model_name = 'dmis-lab/biobert-base-cased-v1.1'
 
 dictionary_path = './data/raw/train_dictionary.txt'
 queries_dir = './data/raw/traindev'
-
+test_queries_dir = './data/raw/test'
 
 os.makedirs('./data/embeds', exist_ok=True)
 dict_embs_npy = './data/embeds/dict.npy'
 
 
+global_log_path = "./data/logger_all.json"
+logs_dir = "./logs"
+result_encoders_dir = "./output"
+
+
+topk = 10
+build_faiss_batch_size = 10000
+search_faiss_batch_size = 10000
+
+weight_decay=0.01
 num_epochs = 10
 # loss_type = 'info_nce_loss'
 loss_type = 'marginal_nll'
@@ -58,3 +68,48 @@ normalize_query_forward = False
 normalize_candidates_forward = False
 
 
+def parse_args():
+    """
+    Parse input arguments
+    """
+    parser = argparse.ArgumentParser(description='ranker train')
+
+    # Required
+    parser.add_argument('--model_name_or_path', required=True,
+                        help='Directory for pretrained model', default=encoder_model_name)
+    parser.add_argument('--training_log_name', required=True,
+                        help='Training log name')
+    parser.add_argument('--faiss_index_name', type=str, required=True,
+                        help='Either IndexHNSWFlat or IndexFlatIP')
+
+    parser.add_argument('--train_batch_size',
+                        help='train batch size',
+                        default=train_batch_size, type=int)
+    
+    parser.add_argument('--weight_decay',
+                        help='weight decay',
+                        default=weight_decay, type=float)
+    parser.add_argument('--topk',  type=int, 
+                        default=topk)
+    parser.add_argument('--learning_rate',
+                        help='learning rate',
+                        default=learning_rate, type=float)
+    
+    parser.add_argument('--num_workers', default=num_workers, type=int)
+    parser.add_argument('--build_faiss_batch_size',
+                        help='Batch size for building faiss index',
+                        default=build_faiss_batch_size, type=int)
+
+    parser.add_argument('--num_epochs',
+                        help='epochs to train',
+                        default=num_epochs, type=int)
+
+    parser.add_argument('--search_faiss_batch_size',
+                        help='search_faiss_batch_size',
+                        default=search_faiss_batch_size, type=int)
+    parser.add_argument('--loss_type',
+                        help='Either marginal_nll or info_nce_loss', default=loss_type)
+
+
+    args = parser.parse_args()
+    return args
