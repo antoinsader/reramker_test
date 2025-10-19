@@ -507,7 +507,8 @@ def train(use_cuda, device, lg, args):
     model = AutoModel.from_pretrained(args.encoder_model_name, use_safetensors=True)
     # model = SentenceTransformer("all-MiniLM-L6-v2")
     # transformer = model._first_module().auto_model  # the underlying Hugging Face model
-
+    LOGGER.info("ARGS: ")
+    LOGGER.info(args)
 
     t0 = time.time()
     encoder = MyEncoder(model, use_cuda)
