@@ -1,7 +1,6 @@
 import datetime
 import gc, json, psutil, os, torch, time, faiss, logging
 import math
-from sentence_transformers import SentenceTransformer
 import numpy as np
 from torch.utils.data import Dataset
 import torch.nn as nn
