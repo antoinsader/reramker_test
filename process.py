@@ -708,7 +708,7 @@ if __name__ == "__main__":
     lg = MyLogger(LOGGER, use_cuda, global_log_path=config.global_log_path, logs_dir=config.logs_dir, tag="train")
 
 
-
+    result_encoder_dir = None
     if not args.skip_train:
         result_encoder_dir = train(use_cuda, device, lg, args)
     if not args.skip_eval:
