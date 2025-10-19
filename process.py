@@ -203,7 +203,7 @@ class MyFaiss():
         if self.faiss_index_name == 'IndexHNSWFlat':
             LOGGER.info(f"USING IndexHNSWFlat index")
             assert self.use_cuda, f'It is better to use_cuda when index is IndexHNSWFlat'
-            assert N < 1_000_000, f"for {N}, it is better to use the flat index"
+            assert N > 1_000_000, f"for {N}, it is better to use the flat index"
             
             num_clusters = int(math.sqrt(N) * 2)
 
@@ -257,7 +257,7 @@ class MyFaiss():
             torch.cuda.empty_cache()
             return True
         else:
-            assert N >= 1_000_000, f"for {N}, it is better to use the IndexHNSWFlat  index"
+            assert N <= 1_000_000, f"for {N}, it is better to use the IndexHNSWFlat  index"
             if self.use_cuda:
                 gpu_resources = faiss.StandardGpuResources()
                 #Index configurations
