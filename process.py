@@ -16,7 +16,7 @@ from tqdm import tqdm
 from transformers import AutoModel
 from config import parse_args, paths, dict_embs_npy
 from config import normalize_query_faiss_search, normalize_query_forward, normalize_candidates_forward
-from utils import compute_metrics, get_labels, info_nce_loss, load_mmap_shape, marginal_nll
+from utils import compute_metrics, get_labels, info_nce_loss, load_mmap_shape, marginal_nll, save_pkl
 
 import config
 
@@ -501,9 +501,6 @@ LOGGER = logging.getLogger()
 
 
 def train(use_cuda, device, lg, args):
-
-    
-
     model = AutoModel.from_pretrained(args.encoder_model_name, use_safetensors=True)
     # model = SentenceTransformer("all-MiniLM-L6-v2")
     # transformer = model._first_module().auto_model  # the underlying Hugging Face model
@@ -591,6 +588,11 @@ def train(use_cuda, device, lg, args):
             train_loss += loss.item()
             train_steps += 1
             
+            os.makedirs("./data/draft",  exist_ok=True)
+            save_pkl(batch_x, "./data/draft/batch_x.pkl")
+            save_pkl(batch_y, "./data/draft/batch_y.pkl")
+            save_pkl(batch_y_pred, "./data/draft/batch_y_pred.pkl")
+
             acc_k, mrr = compute_metrics(batch_y_pred.detach().cpu(), batch_y.cpu(), k=5)
             epoch_acc += acc_k
             epoch_mrr += mrr
@@ -668,8 +670,8 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
             batch_x = {k: v.to(device) for k, v in batch_x.items()}
             batch_y = batch_y.to(device)
             batch_size = batch_y.size(0)
-            
-            
+
+
             query_tokens, candidate_tokens = batch_x
             query_tokens = {k: v.to(device) for k, v in query_tokens.items()}
             candidate_tokens = {k: v.to(device) for k, v in candidate_tokens.items()}
@@ -704,8 +706,8 @@ if __name__ == "__main__":
 
     result_encoder_dir = train(use_cuda, device, lg, args)
     eval(use_cuda, device, lg, result_encoder_dir, args)
-    
-    
+
+
 
 
 # python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=48 --loss_type='info_nce_loss'

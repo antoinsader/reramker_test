@@ -2,9 +2,21 @@ import json
 import torch
 import torch.nn.functional as F
 import numpy as np
-
+import pickle
 
 from config import loss_type
+
+
+
+
+
+def save_pkl(ar, fp):
+    with open(fp, 'wb') as f:
+        pickle.dump(ar, f)
+def get_pkl(fp):
+    with open(fp, "rb") as f:
+        return pickle.load(f)
+
 
 
 def load_mmap_shape(json_file):
