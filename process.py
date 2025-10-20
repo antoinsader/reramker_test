@@ -302,21 +302,30 @@ class MyFaiss():
         if self.faiss_index is None:
             self.init_index(hidden_size, N)
 
+
+        #file to save which dictionary items has been embeded
+        dict_embs_meta_path = dict_embs_npy.replace(".npy", "_meta.npz")
+        embeded_done= set()
+
         if self.last_epoch_candidates_idxs is None:
+            all_indices = set(range(N))
             if not os.path.exists(dict_embs_npy):
-                embed_indices = np.arange(N)
+                embed_indices = np.array(all_indices, dtype=np.int64)
             else:
-                embed_indices = []    
-        
+                if os.path.exists(dict_embs_meta_path):
+                    meta = np.load(dict_embs_meta_path, allow_pickle=True)
+                    embeded_done = set(meta["embs_idxs"].tolist())
+                embed_indices = np.array(sorted(all_indices - embeded_done), dtype=np.int64)
         else:
             embed_indices = self.last_epoch_candidates_idxs
-        
-        
 
-        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode="w+", shape=(N, hidden_size))
+        mode = "w+" if not os.path.exists(dict_embs_npy) else "r+"
+        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode=mode, shape=(N, hidden_size))
+
         assert self.faiss_index is not None
         M = len(embed_indices)
         self.faiss_index.reset()
+        newly_embeded = set()
         for start in tqdm(range(0, M, batch_size), desc="Building faiss index"):
             end = min(start + batch_size, M)
             batch_idxs = embed_indices[start:end]
@@ -328,9 +337,11 @@ class MyFaiss():
                 embs = F.normalize(embs, p=2, dim=1)
             # embs = F.normalize(embs, p=2, dim=1)
             embeddings[batch_idxs] = embs.cpu().numpy()
+            newly_embeded.update(batch_idxs.tolist())
             del inp, att, embs
-
         embeddings.flush()
+        updated_done = embeded_done.union(newly_embeded)
+        np.savez(dict_embs_meta_path, embs_idxs=np.array(sorted(updated_done), dtype=np.int64))
         self.faiss_index.add(np.array(embeddings))
 
         del dictionary_inputs, dictionary_att
@@ -772,7 +783,7 @@ if __name__ == "__main__":
 
 
 
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=48 --loss_type='marginal_nll' --build_faiss_batch_size=4096
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=48 --loss_type='marginal_nll' --build_faiss_batch_size=4096 --faiss_cluster_samples_num=500_000
 
 
 
