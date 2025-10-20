@@ -186,7 +186,7 @@ class TokensPaths():
 
 
 class MyFaiss():
-    def __init__(self,tokens_paths, topk, encoder, faiss_index_name, use_cuda, device):
+    def __init__(self,tokens_paths, topk, encoder, faiss_index_name, faiss_cluster_samples_num, use_cuda, device):
         self.topk = topk
         self.tokens_paths = tokens_paths
 
@@ -194,6 +194,7 @@ class MyFaiss():
         self.device=device
         self.encoder = encoder
         self.faiss_index_name =faiss_index_name
+        self.faiss_cluster_samples_num = faiss_cluster_samples_num
         self.faiss_index = None
         self.last_epoch_candidates_idxs = None
 
@@ -218,7 +219,7 @@ class MyFaiss():
             index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
             index.useFloat16LookupTables = True
             #train clusters on 320k random samples
-            sample_size= 300_000
+            sample_size= self.faiss_cluster_samples_num
             sample_indices = torch.randperm(N)[:sample_size]
             samples_batch_size = 8_000
             samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
@@ -453,7 +454,7 @@ class MyDataset(Dataset):
             if needed > 0:
                 new_positives = np.random.choice(available_to_add, size=needed, replace=False)
                 # Replace last few elements of candidate_idxs with new positives
-                candidate_idxs[-needed:] = new_positives
+                candidate_idxs[-needed:] = torch.from_numpy(new_positives)
 
 
 
@@ -560,6 +561,7 @@ def train(use_cuda, device, lg, args):
         topk= args.topk, 
         encoder=encoder, 
         faiss_index_name=args.faiss_index_name, 
+        faiss_cluster_samples_num = args.faiss_cluster_samples_num,
         use_cuda = use_cuda, 
         device=device
     )
@@ -690,6 +692,7 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
         topk= args.topk,
         encoder=encoder,
         faiss_index_name=args.faiss_index_name,
+        faiss_cluster_samples_num = args.faiss_cluster_samples_num,
         use_cuda = use_cuda,
         device=device
     )
@@ -766,7 +769,10 @@ if __name__ == "__main__":
 
 
 # python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=48 --loss_type='info_nce_loss'
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=32 --loss_type='marginal_nll' --build_faiss_batch_size=4096
+
+
+
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=48 --loss_type='marginal_nll' --build_faiss_batch_size=4096
 
 
 

@@ -55,8 +55,10 @@ global_log_path = "./logs/logger_all.json"
 result_encoders_dir = "./output"
 
 
+faiss_cluster_samples_num = 300_000
 build_faiss_batch_size = 10000
 search_faiss_batch_size = 10000
+
 
 weight_decay=0.01
 num_epochs = 10
@@ -115,6 +117,11 @@ def parse_args():
     parser.add_argument('--build_faiss_batch_size',
                         help='Batch size for building faiss index',
                         default=build_faiss_batch_size, type=int)
+    parser.add_argument('--faiss_cluster_samples_num',
+                        help='When faiss will build clusters, how many samples',
+                        default=faiss_cluster_samples_num, type=int)
+
+
 
     parser.add_argument('--num_epochs',
                         help='epochs to train',
