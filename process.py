@@ -398,17 +398,15 @@ class MyFaiss():
         )
         #1- add already embeded indices
         #2- embed and then add 
-        self.faiss_index.add(embeddings[embeds_ready_indices].half())
-
-
-
-        num_indices_embeds_ready = len(embeds_ready_indices)
+        add_dtype = torch.float16 if self.add_index_use_fp16 else torch.float32
+        ready = embeds_ready_indices
         b_size = batch_size * 2
-        
-        for start in range(0, num_indices_embeds_ready, (b_size * 2)):
-            end = min(start + b_size, num_indices_embeds_ready)
-            idxs = embeds_ready_indices[start:end]
-            
+        for s in range(0, len(ready), b_size ):
+            e = min(s + b_size, len(ready))
+            chunk = torch.as_tensor(embeddings[ready[s:e]], device=self.device, dtype=add_dtype).contiguous()
+            self.faiss_index.add(chunk)
+            del chunk
+
 
 
 
@@ -841,7 +839,7 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
 
     my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, config.loss_score_temperature, fp_16_model_forward=args.fp_16_model_forward)
     my_model.eval()
-    my_faiss.build_faiss(args.build_faiss_batch_size)
+    my_faiss.build_faiss(args.build_faiss_batch_size, epoch = 0)
     cands_idxs = my_faiss.search_faiss(args.search_faiss_batch_size)
     my_ds.set_candidates(cands_idxs)
 

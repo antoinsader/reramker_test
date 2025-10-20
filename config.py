@@ -143,6 +143,7 @@ def parse_args():
     parser.add_argument('--add_index_use_fp16',  action="store_true")
     parser.add_argument('--fp16_embs_saved',  action="store_true")
     parser.add_argument('--fp_16_model_forward',  action="store_true")
+    parser.add_argument('--fp16_faiss_search',  action="store_true")
 
 
     args = parser.parse_args()
