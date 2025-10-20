@@ -216,7 +216,7 @@ class MyFaiss():
                 LOGGER.info(f"FAISS INDEX LOADED FROM CACHE FILE {self.trained_faiss_index_path}")
                 index = faiss.read_index(self.trained_faiss_index_path)
                 if self.use_cuda:
-                    co = faiss.GpuCloneOptions()
+                    co = faiss.GpuClonerOptions()
                     co.allowCpuCoarseQuantizer = True
                     index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index, co)
 
