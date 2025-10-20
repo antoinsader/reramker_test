@@ -644,6 +644,7 @@ def train(use_cuda, device, lg, args):
 
         t0 = time.time()
         cands_idxs = my_faiss.search_faiss(args.search_faiss_batch_size)
+        cands_idxs = cands_idxs.astype(np.int64)
         lg.log_event("Search in faiss ", t0=t0, epoch=epoch)
 
 
