@@ -268,8 +268,8 @@ class MyFaiss():
                 batch_idx = sample_indices[start:end]
 
 
-                inp  = torch.as_tensor(inp[batch_idx], device=self.device)
-                att = torch.as_tensor(att[batch_idx],device=self.device)
+                inp  = torch.as_tensor(dictionary_inputs[batch_idx], device=self.device)
+                att = torch.as_tensor(dictionary_att[batch_idx],device=self.device)
 
                 batch_embeds = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
                 if normalize_faiss_samples:

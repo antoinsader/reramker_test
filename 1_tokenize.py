@@ -78,6 +78,6 @@ query_cuis = [d.replace("MESH:", "") for d in query_cuis]
 test_cuis = [d.replace("MESH:", "") for d in test_cuis]
 
 
-# tt(query_cuis, query_names, 'queries', tokenizer)
+tt(query_cuis, query_names, 'queries', tokenizer)
 tt(dictionary_cuis, dictionary_names, 'dict', tokenizer)
 # tt(test_cuis, test_names, 'test', tokenizer)
