@@ -652,7 +652,7 @@ def train(use_cuda, device, lg, args):
         my_ds.set_candidates(cands_idxs) 
         my_faiss.set_last_epoch_candidates_idxs(cands_idxs)
 
-        recall_at_topk = my_faiss.compute_faiss_recall_at_k(cands_idxs, my_ds.query_cuis, my_ds.query_cuis, k=args.topk)
+        recall_at_topk = my_faiss.compute_faiss_recall_at_k(cands_idxs, my_ds.query_cuis, my_ds.dict_cuis, k=args.topk)
         LOGGER.info(f"[Epoch {epoch}] FAISS recall@{args.topk}: {recall_at_topk:.4f}")
 
         my_loader = torch.utils.data.DataLoader(
