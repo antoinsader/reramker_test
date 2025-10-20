@@ -50,6 +50,8 @@ os.makedirs('./data/embeds', exist_ok=True)
 dict_embs_npy = './data/embeds/dict.npy'
 
 
+trained_faiss_index_path = "./data/faiss_trained_ivfpq_num.faiss"
+
 logs_dir = "./logs"
 global_log_path = "./logs/logger_all.json"
 result_encoders_dir = "./output"

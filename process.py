@@ -186,7 +186,7 @@ class TokensPaths():
 
 
 class MyFaiss():
-    def __init__(self,tokens_paths, topk, encoder, faiss_index_name, faiss_cluster_samples_num, use_cuda, device):
+    def __init__(self,tokens_paths, topk, encoder, faiss_index_name, faiss_cluster_samples_num, trained_faiss_index_path, use_cuda, device):
         self.topk = topk
         self.tokens_paths = tokens_paths
 
@@ -195,6 +195,7 @@ class MyFaiss():
         self.encoder = encoder
         self.faiss_index_name =faiss_index_name
         self.faiss_cluster_samples_num = faiss_cluster_samples_num
+        self.trained_faiss_index_path = trained_faiss_index_path.replace("num", str(self.faiss_cluster_samples_num))
         self.faiss_index = None
         self.last_epoch_candidates_idxs = None
 
@@ -207,15 +208,28 @@ class MyFaiss():
             LOGGER.info(f"USING IndexHNSWFlat index")
             assert self.use_cuda, f'It is better to use_cuda when index is IndexHNSWFlat'
             assert N > 1_000_000, f"for {N}, it is better to use the flat index"
-            
+
+            gpu_resources = faiss.StandardGpuResources()
+
+
+            if os.path.exists(self.trained_faiss_index_path):
+                LOGGER.info(f"FAISS INDEX LOADED FROM CACHE FILE {self.trained_faiss_index_path}")
+                index = faiss.read_index(self.trained_faiss_index_path)
+                if self.use_cuda:
+                    index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index)
+
+                self.faiss_index = index
+                return True
+
+            LOGGER.info(f"FAISS INDEX are being built and trained")
+
             num_clusters = int(math.sqrt(N) * 2)
 
             num_bytes = 32 # num bytes per vector in PQ
-            gpu_resources = faiss.StandardGpuResources()
             quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
             quantizer.hnsw.efConstruction = 200
             quantizer.hnsw.efSearch = 64
-            
+
             index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
             index.useFloat16LookupTables = True
             #train clusters on 320k random samples
@@ -256,11 +270,10 @@ class MyFaiss():
                 cursor += (end -start)
                 del batch_embeds, inp, att
                 torch.cuda.empty_cache()
-            print(f"Samples has NAN",torch.isnan(samples_embeds).any())
-
             index.train(samples_embeds)
             LOGGER.info("Training clusters finsihed ")
             self.faiss_index = index
+            faiss.write_index(faiss.index_gpu_to_cpu(index), self.trained_faiss_index_path)
             del samples_embeds
             torch.cuda.empty_cache()
             return True
@@ -392,16 +405,30 @@ class MyFaiss():
         return candidates
 
 
+    def compute_faiss_recall_at_k(self, query_cuis, dict_cuis, k=10):
+        assert self.last_epoch_candidates_idxs is not None
+        correct = 0
+        num_queries = len(query_cuis)
+        dict_cuis = np.array(dict_cuis)
+
+        for i in range(num_queries):
+            q_cui = query_cuis[i]
+            retreived_cuis = dict_cuis[self.last_epoch_candidates_idxs[i, :k] ]
+            if q_cui in retreived_cuis:
+                correct += 1
+        return correct / max(num_queries, 1)
+
+
 
 class MyDataset(Dataset):
     def __init__(self,tokens_paths, topk, loss_type):
         self.tokens_paths  = tokens_paths
         self.topk = topk
         self.all_candidates_idxs = None
-        self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
         self.loss_type = loss_type
 
 
+        self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
         self.dict_cuis  = np.load(self.tokens_paths.dict_cuis_path)
 
         self.query_inputs = np.memmap(
@@ -575,6 +602,7 @@ def train(use_cuda, device, lg, args):
         encoder=encoder, 
         faiss_index_name=args.faiss_index_name, 
         faiss_cluster_samples_num = args.faiss_cluster_samples_num,
+        trained_faiss_index_path=config.trained_faiss_index_path,
         use_cuda = use_cuda, 
         device=device
     )
@@ -616,6 +644,10 @@ def train(use_cuda, device, lg, args):
         t0 = time.time()
         my_ds.set_candidates(cands_idxs) 
         my_faiss.set_last_epoch_candidates_idxs(cands_idxs)
+
+        recall_at_topk = my_faiss.compute_faiss_recall_at_k(my_ds.query_cuis, my_ds.query_cuis, k=args.topk)
+        LOGGER.info(f"[Epoch {epoch}] FAISS recall@{args.topk}: {recall_at_topk:.4f}")
+
         my_loader = torch.utils.data.DataLoader(
             my_ds, 
             batch_size=args.train_batch_size, 
@@ -710,6 +742,7 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
         encoder=encoder,
         faiss_index_name=args.faiss_index_name,
         faiss_cluster_samples_num = args.faiss_cluster_samples_num,
+        trained_faiss_index_path=config.trained_faiss_index_path,
         use_cuda = use_cuda,
         device=device
     )
@@ -718,7 +751,7 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
     my_model.eval()
     my_faiss.build_faiss(args.build_faiss_batch_size)
     cands_idxs = my_faiss.search_faiss(args.search_faiss_batch_size)
-    my_ds.set_candidates(cands_idxs) 
+    my_ds.set_candidates(cands_idxs)
 
 
     eval_loader = torch.utils.data.DataLoader(
