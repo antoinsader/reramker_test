@@ -635,8 +635,12 @@ def train(use_cuda, device, lg, args):
             if use_cuda:
                 with torch.amp.autocast("cuda"):
                     batch_y_pred = my_model(batch_x)
-                    lg.log_event(f"BATCH Y STATS (MIN, MAX, PRED):  {(batch_y_pred.min().item(), batch_y_pred.max().item(), batch_y_pred.mean().item())}", epoch =epoch)
                     loss = my_model.get_loss(batch_y_pred, batch_y)
+
+
+                min_y, max_y =  batch_y_pred.min().item(), batch_y_pred.max().item() 
+                if min_y == max_y:
+                        LOGGER.warning(f"Batch: {i} have the same min and max for batch_y_pred: {batch_y_pred.max().item()}")
                 scaler.scale(loss).backward()
                 scaler.step(my_model.optimizer)
                 scaler.update()
