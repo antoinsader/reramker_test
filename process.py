@@ -307,6 +307,11 @@ class MyFaiss():
         dict_embs_meta_path = dict_embs_npy.replace(".npy", "_meta.npz")
         embeded_done= set()
 
+
+        mode = "w+" if not os.path.exists(dict_embs_npy) else "r+"
+        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode=mode, shape=(N, hidden_size))
+
+
         if self.last_epoch_candidates_idxs is None:
             all_indices = set(range(N))
             if not os.path.exists(dict_embs_npy):
@@ -318,9 +323,6 @@ class MyFaiss():
                 embed_indices = np.array(sorted(all_indices - embeded_done), dtype=np.int64)
         else:
             embed_indices = self.last_epoch_candidates_idxs
-
-        mode = "w+" if not os.path.exists(dict_embs_npy) else "r+"
-        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode=mode, shape=(N, hidden_size))
 
         assert self.faiss_index is not None
         M = len(embed_indices)
@@ -783,7 +785,7 @@ if __name__ == "__main__":
 
 
 
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=48 --loss_type='marginal_nll' --build_faiss_batch_size=4096 --faiss_cluster_samples_num=500_000
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=48 --loss_type='marginal_nll' --build_faiss_batch_size=4096 --faiss_cluster_samples_num=500_000 --save_debug_pkls
 
 
 

@@ -117,13 +117,13 @@ def main(args):
     with open( test_meta, "w") as f:
         json.dump(meta, f)
 
-    np.save(os.path.join(test_queries_cuis_path), test_cuis)
+    np.save(test_queries_cuis_path, test_cuis)
 
     print(f"created test with len: {len(test_cuis)}")
 
     train_inputs_mmap = np.memmap(
         queries_input_ids_mmap_path,
-        mode="w+",
+        mode="r+",
         dtype=np.int32,
         shape=train_inputs.shape
     )
@@ -132,7 +132,7 @@ def main(args):
 
     train_attention_mmap = np.memmap(
         queries_attention_mask_mmap_path,
-        mode="w+",
+        mode="r+",
         dtype=np.int32,
         shape=train_attention.shape
     )
@@ -143,7 +143,7 @@ def main(args):
     with open(queries_meta, "w") as f:
         json.dump(meta, f)
 
-    np.save(os.path.join(queries_cuis_path), train_cuis)
+    np.save(queries_cuis_path, train_cuis)
 
 
     with open(queries_meta) as f:

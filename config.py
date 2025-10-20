@@ -76,9 +76,6 @@ loss_score_temperature = 0.2 # if small dict 0.07
 
 
 topk = 15
-# the idea of dynamic negatives
-similarity_threshold = 0.75
-max_offline_positives = 5
 
 
 
