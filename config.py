@@ -57,7 +57,7 @@ global_log_path = "./logs/logger_all.json"
 result_encoders_dir = "./output"
 
 
-faiss_cluster_samples_num = 300_000
+faiss_cluster_samples_num = 350_000
 build_faiss_batch_size = 10000
 search_faiss_batch_size = 10000
 

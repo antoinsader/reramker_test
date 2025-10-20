@@ -203,6 +203,8 @@ class MyFaiss():
         self.last_epoch_candidates_idxs = np.array(cands_idxs, dtype=np.int64).flatten()
 
 
+
+
     def init_index(self, hidden_size, N):
         if self.faiss_index_name == 'IndexHNSWFlat':
             LOGGER.info(f"USING IndexHNSWFlat index")
@@ -235,10 +237,9 @@ class MyFaiss():
             index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
             index.useFloat16LookupTables = True
             #train clusters on 320k random samples
-            sample_size= self.faiss_cluster_samples_num
-            sample_indices = torch.randperm(N)[:sample_size]
-            samples_batch_size = 8_000
-            samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
+
+            self.faiss_index = index
+
 
 
             dictionary_inputs = np.memmap(
@@ -255,15 +256,21 @@ class MyFaiss():
                 )
             assert dictionary_att.shape[0] == N, f"Something is wrong! N={N}, dtionary att shape is: {dictionary_att.shape}"
 
+            sample_size= self.faiss_cluster_samples_num
+            sample_indices = torch.randperm(N)[:sample_size]
+            samples_batch_size = 8_000
+            samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
+
+
             cursor = 0
             for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed sample and train clusters"):
                 end = min(start+samples_batch_size, len(sample_indices))
                 batch_idx = sample_indices[start:end]
 
 
-                inp  = torch.as_tensor(dictionary_inputs[batch_idx], device=self.device)
-                att = torch.as_tensor(dictionary_att[batch_idx],device=self.device)
-            
+                inp  = torch.as_tensor(inp[batch_idx], device=self.device)
+                att = torch.as_tensor(att[batch_idx],device=self.device)
+
                 batch_embeds = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
                 if normalize_faiss_samples:
                     batch_embeds = F.normalize(batch_embeds, p=2, dim=1)
@@ -271,12 +278,12 @@ class MyFaiss():
                 samples_embeds[cursor : cursor+(end-start)] = batch_embeds
                 cursor += (end -start)
                 del batch_embeds, inp, att
-                torch.cuda.empty_cache()
-            index.train(samples_embeds)
-            LOGGER.info("Training clusters finsihed ")
-            self.faiss_index = index
-            faiss.write_index(faiss.index_gpu_to_cpu(index), self.trained_faiss_index_path)
+            self.faiss_index.train(samples_embeds)
             del samples_embeds
+
+            LOGGER.info("Training clusters finsihed ")
+            faiss.write_index(faiss.index_gpu_to_cpu(self.faiss_index), self.trained_faiss_index_path)
+            del dictionary_inputs, dictionary_att
             torch.cuda.empty_cache()
             return True
         else:
@@ -345,7 +352,6 @@ class MyFaiss():
 
         assert self.faiss_index is not None
         M = len(embed_indices)
-        self.faiss_index.reset()
         newly_embeded = set()
         for start in tqdm(range(0, M, batch_size), desc="Building faiss index"):
             end = min(start + batch_size, M)
@@ -361,9 +367,20 @@ class MyFaiss():
             newly_embeded.update(batch_idxs.tolist())
             del inp, att, embs
         embeddings.flush()
+        del embeddings
+        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode="r", shape=(N, hidden_size))
+        self.faiss_index.reset()
+
+        if self.faiss_index_name == 'IndexHNSWFlat':
+            sample_size = self.faiss_cluster_samples_num
+            print(f"Training dictionary on samples sample_size: {sample_size}")
+            train_samples = embeddings[np.random.choice(N, sample_size, replace=False)]
+            self.faiss_index.train(train_samples)
+
+        self.faiss_index.add(np.array(embeddings))
+
         updated_done = embeded_done.union(newly_embeded)
         np.savez(dict_embs_meta_path, embs_idxs=np.array(sorted(updated_done), dtype=np.int64))
-        self.faiss_index.add(np.array(embeddings))
 
         del dictionary_inputs, dictionary_att
         torch.cuda.empty_cache()
