@@ -64,9 +64,13 @@ num_epochs = 10
 # loss_type = 'info_nce_loss'
 loss_type = 'marginal_nll'
 
-normalize_query_faiss_search = True
 normalize_query_forward = True
 normalize_candidates_forward = True
+
+normalize_query_faiss_search = True
+normalize_dictionary_faiss_build = True
+normalize_faiss_samples= True
+
 temperature = 0.07
 
 def parse_args():

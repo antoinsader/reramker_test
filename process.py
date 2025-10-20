@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from transformers import AutoModel
 from config import parse_args, paths, dict_embs_npy
-from config import normalize_query_faiss_search, normalize_query_forward, normalize_candidates_forward
+from config import normalize_query_faiss_search, normalize_query_forward, normalize_candidates_forward, normalize_faiss_samples, normalize_dictionary_faiss_build
 from utils import compute_metrics, get_labels, info_nce_loss, load_mmap_shape, marginal_nll, save_pkl
 
 import config
@@ -246,6 +246,8 @@ class MyFaiss():
                 att = torch.as_tensor(dictionary_att[batch_idx],device=self.device)
             
                 batch_embeds = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
+                if normalize_faiss_samples:
+                    batch_embeds = F.normalize(batch_embeds, p=2, dim=1)
                 batch_embeds = batch_embeds.contiguous()
                 samples_embeds[cursor : cursor+(end-start)] = batch_embeds
                 cursor += (end -start)
@@ -311,6 +313,8 @@ class MyFaiss():
             inp  = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
             att = torch.as_tensor(dictionary_att[batch_idxs],device=self.device)
             embs = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
+            if normalize_dictionary_faiss_build:
+                embs = F.normalize(embs, p=2, dim=1)
             # embs = F.normalize(embs, p=2, dim=1)
             embeddings[batch_idxs] = embs.cpu().numpy()
             del inp, att, embs
