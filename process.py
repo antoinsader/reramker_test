@@ -216,7 +216,9 @@ class MyFaiss():
                 LOGGER.info(f"FAISS INDEX LOADED FROM CACHE FILE {self.trained_faiss_index_path}")
                 index = faiss.read_index(self.trained_faiss_index_path)
                 if self.use_cuda:
-                    index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index)
+                    co = faiss.GpuCloneOptions()
+                    co.allowCpuCoarseQuantizer = True
+                    index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index, co)
 
                 self.faiss_index = index
                 return True
@@ -398,7 +400,7 @@ class MyFaiss():
             else:
                 embs = embs.cpu().numpy().astype(np.float32)
 
-            chunk_cands_similarities, chunk_cand_idxs = faiss_index.search(embs, self.topk)
+            _, chunk_cand_idxs = faiss_index.search(embs, self.topk)
 
             
             candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
@@ -409,15 +411,15 @@ class MyFaiss():
         return candidates
 
 
-    def compute_faiss_recall_at_k(self, query_cuis, dict_cuis, k=10):
-        assert self.last_epoch_candidates_idxs is not None
+    def compute_faiss_recall_at_k(self,cands_idxs ,query_cuis, dict_cuis, k=10):
+        assert cands_idxs is not None
         correct = 0
         num_queries = len(query_cuis)
         dict_cuis = np.array(dict_cuis)
 
         for i in range(num_queries):
             q_cui = query_cuis[i]
-            retreived_cuis = dict_cuis[self.last_epoch_candidates_idxs[i, :k] ]
+            retreived_cuis = dict_cuis[cands_idxs[i, :k] ]
             if q_cui in retreived_cuis:
                 correct += 1
         return correct / max(num_queries, 1)
@@ -649,7 +651,7 @@ def train(use_cuda, device, lg, args):
         my_ds.set_candidates(cands_idxs) 
         my_faiss.set_last_epoch_candidates_idxs(cands_idxs)
 
-        recall_at_topk = my_faiss.compute_faiss_recall_at_k(my_ds.query_cuis, my_ds.query_cuis, k=args.topk)
+        recall_at_topk = my_faiss.compute_faiss_recall_at_k(cands_idxs, my_ds.query_cuis, my_ds.query_cuis, k=args.topk)
         LOGGER.info(f"[Epoch {epoch}] FAISS recall@{args.topk}: {recall_at_topk:.4f}")
 
         my_loader = torch.utils.data.DataLoader(
