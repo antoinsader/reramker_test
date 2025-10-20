@@ -329,13 +329,17 @@ class MyFaiss():
             all_indices = set(range(N))
             if not os.path.exists(dict_embs_npy):
                 embed_indices = np.array(all_indices, dtype=np.int64)
+                print(f"We will embed all the dictionary items {len(embed_indices)}")
             else:
                 if os.path.exists(dict_embs_meta_path):
                     meta = np.load(dict_embs_meta_path, allow_pickle=True)
                     embeded_done = set(meta["embs_idxs"].tolist())
+                    print(f"From {N}, I have {len(embeded_done)} so I will embed only {len(all_indices - embeded_done)}")
+
                 embed_indices = np.array(sorted(all_indices - embeded_done), dtype=np.int64)
         else:
             embed_indices = self.last_epoch_candidates_idxs
+            print(f"This is not epoch 0 and faiss will embed only the candidates of last epoch {len(embed_indices)}")
 
         assert self.faiss_index is not None
         M = len(embed_indices)
