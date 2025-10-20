@@ -50,12 +50,11 @@ os.makedirs('./data/embeds', exist_ok=True)
 dict_embs_npy = './data/embeds/dict.npy'
 
 
-global_log_path = "./data/logger_all.json"
 logs_dir = "./logs"
+global_log_path = "./logs/logger_all.json"
 result_encoders_dir = "./output"
 
 
-topk = 15
 build_faiss_batch_size = 10000
 search_faiss_batch_size = 10000
 
@@ -72,6 +71,14 @@ normalize_dictionary_faiss_build = True
 normalize_faiss_samples= True
 
 loss_score_temperature = 0.2 # if small dict 0.07
+
+
+topk = 15
+# the idea of dynamic negatives
+similarity_threshold = 0.75
+max_offline_positives = 5
+
+
 
 def parse_args():
     """

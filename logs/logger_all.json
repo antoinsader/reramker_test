@@ -1,0 +1,1 @@
+[{"id": 1}, {"id": 2, "training_log_name": "big_dictionary", "queries size": 49410, "dictionary size": 4263543, "finished time": "0h, 7mins, 13secs", "log details file": "./logs/log_2_2025-10-19_21-05-34.log", "epochs": 10, "acc@5": 0.0, "mrr": 0.0, "encoder dir": "./output/encoder_2/"}]
