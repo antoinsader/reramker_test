@@ -1,3 +1,9 @@
+
+
+# use float16 as args 
+
+
+
 import datetime
 import gc, json, psutil, os, torch, time, faiss, logging
 import math
@@ -16,7 +22,7 @@ from collections import defaultdict
 
 from transformers import AutoModel
 from config import parse_args, paths, dict_embs_npy
-from config import normalize_query_faiss_search, normalize_query_forward, normalize_candidates_forward, normalize_faiss_samples, normalize_dictionary_faiss_build
+from config import normalize_faiss
 from utils import compute_metrics, get_labels, info_nce_loss, load_mmap_shape, marginal_nll, save_pkl
 
 import config
@@ -186,7 +192,7 @@ class TokensPaths():
 
 
 class MyFaiss():
-    def __init__(self,tokens_paths, topk, encoder, faiss_index_name, faiss_cluster_samples_num, trained_faiss_index_path, use_cuda, device):
+    def __init__(self,tokens_paths, topk, encoder, faiss_index_name, faiss_cluster_samples_num, trained_faiss_index_path, use_cuda, device, add_index_use_fp16, fp16_embs_saved, fp16_faiss_search):
         self.topk = topk
         self.tokens_paths = tokens_paths
 
@@ -194,6 +200,11 @@ class MyFaiss():
         self.device=device
         self.encoder = encoder
         self.faiss_index_name =faiss_index_name
+        
+        self.add_index_use_fp16 = add_index_use_fp16
+        self.fp16_embs_saved = fp16_embs_saved
+        self.fp16_faiss_search = fp16_faiss_search
+        
         self.faiss_cluster_samples_num = faiss_cluster_samples_num
         self.trained_faiss_index_path = trained_faiss_index_path.replace("num", str(self.faiss_cluster_samples_num))
         self.faiss_index = None
@@ -271,8 +282,8 @@ class MyFaiss():
                 inp  = torch.as_tensor(dictionary_inputs[batch_idx], device=self.device)
                 att = torch.as_tensor(dictionary_att[batch_idx],device=self.device)
 
-                batch_embeds = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
-                if normalize_faiss_samples:
+                batch_embeds = self.encoder.get_emb(inp, att, use_amp=self.add_index_use_fp16, use_inference=True)
+                if normalize_faiss:
                     batch_embeds = F.normalize(batch_embeds, p=2, dim=1)
                 batch_embeds = batch_embeds.contiguous()
                 samples_embeds[cursor : cursor+(end-start)] = batch_embeds
@@ -331,57 +342,99 @@ class MyFaiss():
 
 
         mode = "w+" if not os.path.exists(dict_embs_npy) else "r+"
-        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode=mode, shape=(N, hidden_size))
+        embs_saved_type = np.float16 if self.fp16_embs_saved else np.float32
+        embed_saved_type_str = 'fp16' if self.fp16_embs_saved else 'fp32'
 
 
+        embeddings = np.memmap(dict_embs_npy, dtype=embs_saved_type, mode=mode, shape=(N, hidden_size))
+
+        embeds_ready_indices = []
+        all_indices = set(range(N))
         if self.last_epoch_candidates_idxs is None:
-            all_indices = set(range(N))
             if not os.path.exists(dict_embs_npy):
                 embed_indices = np.array(all_indices, dtype=np.int64)
                 print(f"We will embed all the dictionary items {len(embed_indices)}")
             else:
                 if os.path.exists(dict_embs_meta_path):
                     meta = np.load(dict_embs_meta_path, allow_pickle=True)
+                    assert meta["np_type"] == embed_saved_type_str, f"meta type {meta['np_type']}, embed_saved_type_str: {embed_saved_type_str}"
+                    assert meta["normalize_faiss"] == normalize_faiss, f"meta normalize_faiss {meta['normalize_faiss']}, normalize_faiss: {normalize_faiss}"
+
                     embeded_done = set(meta["embs_idxs"].tolist())
                     print(f"From {N}, I have {len(embeded_done)} so I will embed only {len(all_indices - embeded_done)}")
-
+                embeds_ready_indices = embeded_done
                 embed_indices = np.array(sorted(all_indices - embeded_done), dtype=np.int64)
         else:
             embed_indices = self.last_epoch_candidates_idxs
+            embeds_ready_indices = all_indices -  embed_indices
+
             print(f"This is not epoch 0 and faiss will embed only the candidates of last epoch {len(embed_indices)}")
 
+
+        embeds_ready_indices = np.array(sorted(embeds_ready_indices), dtype=np.int64)
+
+
         assert self.faiss_index is not None
-        M = len(embed_indices)
-        newly_embeded = set()
-        for start in tqdm(range(0, M, batch_size), desc="Building faiss index"):
-            end = min(start + batch_size, M)
-            batch_idxs = embed_indices[start:end]
-
-            inp  = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
-            att = torch.as_tensor(dictionary_att[batch_idxs],device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
-            if normalize_dictionary_faiss_build:
-                embs = F.normalize(embs, p=2, dim=1)
-            # embs = F.normalize(embs, p=2, dim=1)
-            embeddings[batch_idxs] = embs.cpu().numpy()
-            newly_embeded.update(batch_idxs.tolist())
-            del inp, att, embs
-        embeddings.flush()
-        del embeddings
-        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode="r", shape=(N, hidden_size))
         self.faiss_index.reset()
-
+        
+        
         if self.faiss_index_name == 'IndexHNSWFlat':
             sample_size = self.faiss_cluster_samples_num
             print(f"Training dictionary on samples sample_size: {sample_size}")
             train_samples = embeddings[np.random.choice(N, sample_size, replace=False)]
             self.faiss_index.train(train_samples)
 
-        self.faiss_index.add(np.array(embeddings))
+
+
+        M = len(embed_indices)
+        newly_embeded = set()
+        with torch.inference_mode():
+            #1- add already embeded indices
+            #2- embed and then add 
+            
+            num_indices_embeds_ready = len(embeds_ready_indices)
+            b_size = batch_size * 2
+            for start in range(0, num_indices_embeds_ready, (b_size * 2)):
+                end = min(start + b_size, num_indices_embeds_ready)
+                idxs = embeds_ready_indices[start:end]
+                embs = embeddings[idxs]
+                self.faiss_index.add(embs.half().contiguous())
+            
+            
+            for start in tqdm(range(0, M, batch_size), desc="Building faiss index"):
+                end = min(start + batch_size, M)
+                batch_idxs = embed_indices[start:end]
+
+                inp  = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
+                att = torch.as_tensor(dictionary_att[batch_idxs],device=self.device)
+                embs = self.encoder.get_emb(inp, att, use_amp=self.add_index_use_fp16, use_inference=True)
+                if normalize_faiss:
+                    embs = F.normalize(embs, p=2, dim=1)
+
+                self.faiss_index.add(embs.contiguous())
+
+                if self.fp16_embs_saved:
+                    embeddings[batch_idxs] = embs.cpu().half().numpy()
+                else:
+                    embeddings[batch_idxs] = embs.cpu().numpy()
+
+                newly_embeded.update(batch_idxs.tolist())
+
+                del inp, att, embs
+
+
+
+        embeddings.flush()
+        del embeddings
+
+        embeddings = np.memmap(dict_embs_npy, dtype=embs_saved_type, mode="r", shape=(N, hidden_size))
+        
+
+
+
 
         updated_done = embeded_done.union(newly_embeded)
-        np.savez(dict_embs_meta_path, embs_idxs=np.array(sorted(updated_done), dtype=np.int64))
-
+        np.savez(dict_embs_meta_path, embs_idxs=np.array(sorted(updated_done), dtype=np.int64), np_type=embed_saved_type_str, normalize_faiss=normalize_faiss)
         del dictionary_inputs, dictionary_att
         torch.cuda.empty_cache()
         gc.collect()
@@ -405,12 +458,14 @@ class MyFaiss():
         candidates = np.zeros((N,self.topk))
         faiss_index = self.faiss_index
 
+
+
         for start in range(0, N,batch_size):
             end = min(start + batch_size, N)
             inp  = torch.as_tensor(query_inputs[start:end], device=self.device)
             att = torch.as_tensor(query_att[start:end],device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=False, use_inference=True)
-            if normalize_query_faiss_search:
+            embs = self.encoder.get_emb(inp, att, use_amp=self.fp16_faiss_search, use_inference=True)
+            if normalize_faiss:
                 embs = F.normalize(embs, p=2, dim=1)
             if self.use_cuda:
                 embs = embs.contiguous()
@@ -536,12 +591,13 @@ class MyDataset(Dataset):
 
 
 class MyModel(nn.Module):
-    def __init__(self, encoder, learning_rate,weight_decay, use_cuda, loss_score_temperature):
+    def __init__(self, encoder, learning_rate,weight_decay, use_cuda, loss_score_temperature, fp_16_model_forward):
         super(MyModel, self).__init__()
 
         self.encoder = encoder
         self.learning_rate = learning_rate
         self.use_cuda = use_cuda
+        self.fp_16_model_forward = fp_16_model_forward
         self.optimizer = optim.AdamW(
             self.encoder.encoder.parameters(),
             lr=self.learning_rate,
@@ -567,20 +623,20 @@ class MyModel(nn.Module):
 
 
         #(b, h)
-        query_embeds = self.encoder.get_emb(query_tokens["input_ids"], query_tokens["attention_mask"], use_amp=True, use_inference=False)
+        query_embeds = self.encoder.get_emb(query_tokens["input_ids"], query_tokens["attention_mask"], use_amp=self.fp_16_model_forward, use_inference=False)
 
 
         candidates_tokens["input_ids"] = candidates_tokens["input_ids"].view(batch_size * topk, max_length)
         candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].view(batch_size * topk, max_length)
         #(batch_size * topk , h)
-        candidates_embs = self.encoder.get_emb(candidates_tokens["input_ids"], candidates_tokens["attention_mask"], use_amp=True, use_inference=False)
+        candidates_embs = self.encoder.get_emb(candidates_tokens["input_ids"], candidates_tokens["attention_mask"], use_amp=self.fp_16_model_forward, use_inference=False)
 
-        if normalize_candidates_forward:
+        if normalize_faiss:
             candidates_embs = F.normalize(candidates_embs, p=2, dim=1)
 
 
         candidates_embs = candidates_embs.view(batch_size, topk, -1)
-        if normalize_query_forward:
+        if normalize_faiss:
             query_embeds = F.normalize(query_embeds, p=2, dim=1)
         query_embeds = query_embeds.unsqueeze(1) # [batch_size, 1, hidden]
 
@@ -627,10 +683,12 @@ def train(use_cuda, device, lg, args):
         faiss_cluster_samples_num = args.faiss_cluster_samples_num,
         trained_faiss_index_path=config.trained_faiss_index_path,
         use_cuda = use_cuda, 
-        device=device
+        device=device,
+         add_index_use_fp16 = args.add_index_use_fp16, fp16_embs_saved=args.fp16_embs_saved,
+         fp16_faiss_search=args.fp16_faiss_search
     )
     my_ds = MyDataset(tokens_paths, args.topk, loss_type=args.loss_type)
-    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, loss_score_temperature=config.loss_score_temperature)
+    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, loss_score_temperature=config.loss_score_temperature, fp_16_model_forward=args.fp_16_model_forward)
     scaler = torch.amp.GradScaler(device="cuda", enabled=use_cuda)
 
 
@@ -768,10 +826,13 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
         faiss_cluster_samples_num = args.faiss_cluster_samples_num,
         trained_faiss_index_path=config.trained_faiss_index_path,
         use_cuda = use_cuda,
-        device=device
+        device=device,
+         add_index_use_fp16 = args.add_index_use_fp16, fp16_embs_saved=args.fp16_embs_saved, 
+         fp16_faiss_search=args.fp16_faiss_search
+        
     )
 
-    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, config.loss_score_temperature)
+    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, config.loss_score_temperature, fp_16_model_forward=args.fp_16_model_forward)
     my_model.eval()
     my_faiss.build_faiss(args.build_faiss_batch_size)
     cands_idxs = my_faiss.search_faiss(args.search_faiss_batch_size)
@@ -846,7 +907,8 @@ if __name__ == "__main__":
 
 
 
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=48 --loss_type='marginal_nll' --build_faiss_batch_size=4096 --faiss_cluster_samples_num=500_000 --save_debug_pkls
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=48 --loss_type='marginal_nll' --build_faiss_batch_size=4096 --faiss_cluster_samples_num=500_000 --save_debug_pkls --add_index_use_fp16 --fp16_faiss_search --fp16_embs_saved --fp_16_model_forward
+
 
 
 

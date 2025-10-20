@@ -74,6 +74,7 @@ normalize_query_faiss_search = True
 normalize_dictionary_faiss_build = True
 normalize_faiss_samples= True
 
+normalize_faiss = True
 loss_score_temperature = 0.2 # if small dict 0.07
 
 
@@ -137,6 +138,10 @@ def parse_args():
     parser.add_argument('--skip_eval',  action="store_true")
     parser.add_argument('--encoder_to_eval',
                         help='Dir of the encoder to eval')
+
+    parser.add_argument('--add_index_use_fp16',  action="store_true")
+    parser.add_argument('--fp16_embs_saved',  action="store_true")
+    parser.add_argument('--fp_16_model_forward',  action="store_true")
 
 
     args = parser.parse_args()
