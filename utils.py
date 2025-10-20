@@ -26,24 +26,41 @@ def load_mmap_shape(json_file):
 
     
 
-def marginal_nll(score, target):
+def marginal_nll(score, target, temperature):
     """
     sum all scores among positive samples
     """
-    predict = F.softmax(score, dim=-1)
-    loss = predict * target
-    loss = loss.sum(dim=-1)                   # sum all positive scores
-    loss = loss[loss > 0]                     # filter sets with at least one positives
-    loss = torch.clamp(loss, min=1e-9, max=1) # for numerical stability
-    loss = -torch.log(loss)                   # for negative log likelihood
-    if len(loss) == 0:
-        loss = loss.sum()                     # will return zero loss
-    else:
-        loss = loss.mean()
-    return loss
+    score = score / temperature
+    import torch
+import torch.nn.functional as F
+
+def marginal_nll(scores: torch.Tensor, labels: torch.Tensor, temperature: float = 0.05) -> torch.Tensor:
+    # Avoid large values before exponentiation
+    scores = scores / temperature
+
+    # Mask out invalid entries (e.g., queries with no positives)
+    valid_mask = labels.sum(dim=1) > 0
+    if not valid_mask.any():
+        return torch.tensor(0.0, device=scores.device, requires_grad=True)
+
+    scores = scores[valid_mask]
+    labels = labels[valid_mask]
+
+    # Exponentiate scores
+    exp_scores = torch.exp(scores)
+
+    # For each query, numerator = sum of exp(sim) over positive candidates
+    numerator = (exp_scores * labels).sum(dim=1)
+    denominator = exp_scores.sum(dim=1) + 1e-8  # avoid division by zero
+
+    # Negative log-likelihood
+    loss = -torch.log(numerator / denominator + 1e-8)
+
+    return loss.mean()
 
 
-def info_nce_loss(scores,targets, temperature=0.07):
+
+def info_nce_loss(scores,targets, temperature):
     scores = scores / temperature
     return F.cross_entropy(scores, targets, ignore_index=-100)
 

@@ -55,7 +55,7 @@ logs_dir = "./logs"
 result_encoders_dir = "./output"
 
 
-topk = 10
+topk = 15
 build_faiss_batch_size = 10000
 search_faiss_batch_size = 10000
 
@@ -71,7 +71,7 @@ normalize_query_faiss_search = True
 normalize_dictionary_faiss_build = True
 normalize_faiss_samples= True
 
-temperature = 0.07
+loss_score_temperature = 0.2 # if small dict 0.07
 
 def parse_args():
     """

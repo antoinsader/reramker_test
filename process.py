@@ -11,6 +11,7 @@ from torchmetrics.classification import MulticlassAccuracy
 from torchmetrics.retrieval import RetrievalMRR
 from transformers import get_linear_schedule_with_warmup
 from tqdm import tqdm
+from collections import defaultdict
 
 
 from transformers import AutoModel
@@ -164,7 +165,8 @@ class MyEncoder():
 
         mask = atts_tensor.unsqueeze(-1).expand(emb.size()).float()
         embs = (emb * mask).sum(1) / mask.sum(1)  # mean pooling
-
+        den = mask.sum(1).clamp_min(1e-6)
+        embs = (emb * mask).sum(1) / den
         return embs
     def save_state(self, path):
         self.encoder.save_pretrained(path)
@@ -216,7 +218,7 @@ class MyFaiss():
             index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
             index.useFloat16LookupTables = True
             #train clusters on 320k random samples
-            sample_size= 210_000
+            sample_size= 300_000
             sample_indices = torch.randperm(N)[:sample_size]
             samples_batch_size = 8_000
             samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
@@ -253,6 +255,8 @@ class MyFaiss():
                 cursor += (end -start)
                 del batch_embeds, inp, att
                 torch.cuda.empty_cache()
+            print(f"Samples has NAN",torch.isnan(samples_embeds).any())
+
             index.train(samples_embeds)
             LOGGER.info("Training clusters finsihed ")
             self.faiss_index = index
@@ -292,17 +296,23 @@ class MyFaiss():
 
         N = self.tokens_paths.dict_shape[0]
         hidden_size = self.encoder.encoder.config.hidden_size
-        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode="w+", shape=(N, hidden_size))
 
         assert hidden_size is not None
         if self.faiss_index is None:
             self.init_index(hidden_size, N)
 
         if self.last_epoch_candidates_idxs is None:
-            embed_indices = np.arange(N)
+            if not os.path.exists(dict_embs_npy):
+                embed_indices = np.arange(N)
+            else:
+                embed_indices = []    
+        
         else:
             embed_indices = self.last_epoch_candidates_idxs
+        
+        
 
+        embeddings = np.memmap(dict_embs_npy, dtype=np.float32, mode="w+", shape=(N, hidden_size))
         assert self.faiss_index is not None
         M = len(embed_indices)
         self.faiss_index.reset()
@@ -319,9 +329,9 @@ class MyFaiss():
             embeddings[batch_idxs] = embs.cpu().numpy()
             del inp, att, embs
 
+        embeddings.flush()
         self.faiss_index.add(np.array(embeddings))
 
-        embeddings.flush()
         del dictionary_inputs, dictionary_att
         torch.cuda.empty_cache()
         gc.collect()
@@ -344,6 +354,7 @@ class MyFaiss():
         N = tokens_size
         candidates = np.zeros((N,self.topk))
         faiss_index = self.faiss_index
+
         for start in range(0, N,batch_size):
             end = min(start + batch_size, N)
             inp  = torch.as_tensor(query_inputs[start:end], device=self.device)
@@ -356,7 +367,9 @@ class MyFaiss():
             else:
                 embs = embs.cpu().numpy().astype(np.float32)
 
-            _, chunk_cand_idxs = faiss_index.search(embs, self.topk)
+            chunk_cands_similarities, chunk_cand_idxs = faiss_index.search(embs, self.topk)
+
+            
             candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
             del inp, att, embs
 
@@ -403,12 +416,17 @@ class MyDataset(Dataset):
                 dtype=np.int32,
                 shape=self.tokens_paths.dict_shape
             )
+        self.dictionary_cui_to_idx = defaultdict(list)
+        for idx, cui in enumerate(self.dict_cuis):
+            self.dictionary_cui_to_idx[cui].append(idx)
 
     def __len__(self,):
         return len(self.query_inputs)
 
     def set_candidates(self,cands):
         self.all_candidates_idxs = torch.as_tensor(cands, dtype=torch.long)
+
+
     def __getitem__(self, query_idx):
         assert self.all_candidates_idxs is not None
         query_tokens = {
@@ -416,14 +434,35 @@ class MyDataset(Dataset):
             "attention_mask": self.query_att[query_idx],
         }
         candidate_idxs = self.all_candidates_idxs[query_idx]
-
         assert len(candidate_idxs) == self.topk
+
+        query_cui = self.query_cuis[query_idx] #1
+
+        query_positive_idxs = self.dictionary_cui_to_idx.get(query_cui, [])
+        query_positive_idxs= [q for q in query_positive_idxs if q != query_idx]
+        assert len(query_positive_idxs) > 0, f"Query idx: {query_idx} with cui: {query_cui} does not have any positives idxs"
+
+
+
+        intersection = list(set(query_positive_idxs) & set(candidate_idxs))
+        if len(intersection) < 2:
+            needed = 2 - len(intersection)
+            available_to_add = list(set(query_positive_idxs) - set(candidate_idxs))
+            if len(available_to_add) < needed:
+                needed = len(available_to_add)
+            if needed > 0:
+                new_positives = np.random.choice(available_to_add, size=needed, replace=False)
+                # Replace last few elements of candidate_idxs with new positives
+                candidate_idxs[-needed:] = new_positives
+
+
+
+
         candidate_tokens = {
             "input_ids": self.dictionary_inputs[candidate_idxs],
             "attention_mask": self.dictionary_att[candidate_idxs],
         }
 
-        query_cui = self.query_cuis[query_idx] #1
         query_candidates_cuis = np.array(self.dict_cuis)[candidate_idxs] #(batch_size, topk)
         # labels = (candidates_cuis == query_cui).astype(np.float32)
         labels = get_labels(query_candidates_cuis, query_cui, self.loss_type) #if error_type == 'info_nce_loss', will return [batch_size] for each item is the first match, for marginal_nll error_type will return  (batch_size, topk) for each item 0 if false, 1 for true
@@ -433,7 +472,7 @@ class MyDataset(Dataset):
 
 
 class MyModel(nn.Module):
-    def __init__(self, encoder, learning_rate,weight_decay, use_cuda):
+    def __init__(self, encoder, learning_rate,weight_decay, use_cuda, loss_score_temperature):
         super(MyModel, self).__init__()
 
         self.encoder = encoder
@@ -447,7 +486,7 @@ class MyModel(nn.Module):
         )
 
         self.criterion = info_nce_loss if args.loss_type == 'info_nce_loss' else marginal_nll
-
+        self.loss_score_temperature = loss_score_temperature
 
 
 
@@ -494,7 +533,7 @@ class MyModel(nn.Module):
         if self.use_cuda:
             targets = targets.cuda()
             outputs = outputs.cuda()
-        loss = self.criterion(outputs, targets)
+        loss = self.criterion(outputs, targets, self.loss_score_temperature)
         return loss
 
 
@@ -525,7 +564,7 @@ def train(use_cuda, device, lg, args):
         device=device
     )
     my_ds = MyDataset(tokens_paths, args.topk, loss_type=args.loss_type)
-    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda)
+    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, loss_score_temperature=config.loss_score_temperature)
     scaler = torch.amp.GradScaler(device="cuda", enabled=use_cuda)
 
 
@@ -582,8 +621,6 @@ def train(use_cuda, device, lg, args):
                 with torch.amp.autocast("cuda"):
                     batch_y_pred = my_model(batch_x)
                     lg.log_event(f"BATCH Y STATS (MIN, MAX, PRED):  {(batch_y_pred.min().item(), batch_y_pred.max().item(), batch_y_pred.mean().item())}", epoch =epoch)
-                    LOGGER.info()
-                    
                     loss = my_model.get_loss(batch_y_pred, batch_y)
                 scaler.scale(loss).backward()
                 scaler.step(my_model.optimizer)
@@ -629,8 +666,8 @@ def train(use_cuda, device, lg, args):
         lg.log_global_data[-1]["finished time"]  = training_time_str
         lg.log_global_data[-1]["log details file"]  = lg.log_path
         lg.log_global_data[-1]["epochs"]  = args.num_epochs
-        lg.log_global_data[-1]["acc@5"]  = epoch_acc
-        lg.log_global_data[-1]["mrr"]  = epoch_mrr
+        lg.log_global_data[-1]["acc@5"]  = epoch_acc/n_eval
+        lg.log_global_data[-1]["mrr"]  = epoch_mrr/n_eval
         lg.log_global_data[-1]["encoder dir"]  = result_encoder_dir
         json.dump(lg.log_global_data,f)
 
@@ -657,7 +694,7 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
         device=device
     )
 
-    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda)
+    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, config.loss_score_temperature)
     my_model.eval()
     my_faiss.build_faiss(args.build_faiss_batch_size)
     cands_idxs = my_faiss.search_faiss(args.search_faiss_batch_size)
@@ -729,7 +766,7 @@ if __name__ == "__main__":
 
 
 # python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=48 --loss_type='info_nce_loss'
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=32 --loss_type='info_nce_loss' --build_faiss_batch_size=4096
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=32 --loss_type='marginal_nll' --build_faiss_batch_size=4096
 
 
 
