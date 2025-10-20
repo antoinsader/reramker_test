@@ -577,6 +577,9 @@ def train(use_cuda, device, lg, args):
             if use_cuda:
                 with torch.amp.autocast("cuda"):
                     batch_y_pred = my_model(batch_x)
+                    lg.log_event(f"BATCH Y STATS (MIN, MAX, PRED):  {(batch_y_pred.min().item(), batch_y_pred.max().item(), batch_y_pred.mean().item())}", epoch =epoch)
+                    LOGGER.info()
+                    
                     loss = my_model.get_loss(batch_y_pred, batch_y)
                 scaler.scale(loss).backward()
                 scaler.step(my_model.optimizer)
@@ -627,6 +630,7 @@ def train(use_cuda, device, lg, args):
         lg.log_global_data[-1]["encoder dir"]  = result_encoder_dir
         json.dump(lg.log_global_data,f)
 
+    LOGGER.info(f"main info are: {lg.log_global_data[-1]}")
 
     LOGGER.info(f"LOGS saved in {lg.log_path} and in global with the name: {args.training_log_name}")
     torch.cuda.empty_cache()
