@@ -61,7 +61,7 @@ faiss_cluster_samples_num = 350_000
 build_faiss_batch_size = 10000
 search_faiss_batch_size = 10000
 
-faiss_build_each_n_epochs = 2
+faiss_build_each_n_epochs = 1
 
 weight_decay=0.01
 num_epochs = 10
