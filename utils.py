@@ -24,19 +24,8 @@ def load_mmap_shape(json_file):
     return tuple(meta["shape"])
 
 
-    
 
-def marginal_nll(score, target, temperature):
-    """
-    sum all scores among positive samples
-    """
-    score = score / temperature
-    import torch
-import torch.nn.functional as F
-
-def marginal_nll(scores: torch.Tensor, labels: torch.Tensor, temperature: float = 0.05) -> torch.Tensor:
-    # Avoid large values before exponentiation
-    scores = scores / temperature
+def marginal_nll(scores, labels):
 
     # Mask out invalid entries (e.g., queries with no positives)
     valid_mask = labels.sum(dim=1) > 0
@@ -60,8 +49,7 @@ def marginal_nll(scores: torch.Tensor, labels: torch.Tensor, temperature: float 
 
 
 
-def info_nce_loss(scores,targets, temperature):
-    scores = scores / temperature
+def info_nce_loss(scores,targets):
     return F.cross_entropy(scores, targets, ignore_index=-100)
 
 

@@ -5,6 +5,7 @@
 
 
 import datetime
+from sympy import true
 import gc, json, psutil, os, torch, time, faiss, logging
 import math
 import numpy as np
@@ -21,24 +22,28 @@ from collections import defaultdict
 
 
 from transformers import AutoModel
-from config import parse_args, paths, dict_embs_npy
-from config import normalize_faiss
+from config import CheckPointModel, FaissConfig, GlobalConfig, LoggerConfig, ModelConfig, TrainingConfig, parse_args, paths
 from utils import compute_metrics, get_labels, info_nce_loss, load_mmap_shape, marginal_nll, save_pkl
 
 import config
 
 
+# ====================
+# MY LOGGER
+# ====================
 
 class MyLogger:
-    def __init__(self, logger, use_cuda, global_log_path, logs_dir, tag="train"):
-        self.use_cuda = use_cuda
-        self.global_log_path = global_log_path
-        self.logs_dir=  logs_dir
+    def __init__(self, logger, cfg:LoggerConfig):
+        self.use_cuda = torch.cuda.is_available
+        self.global_log_path = cfg.global_log_path
+        self.logs_dir=  cfg.logs_dir
+        self.tag = cfg.tag
 
+        self.process = psutil.Process(os.getpid())
         self.device = "cuda" if self.use_cuda else "cpu"
         self.logger = logger
-        self.tag = tag
-        self.process = psutil.Process(os.getpid())
+
+
 
         self.cpu_memory_used = 0.0
         self.messages = []
@@ -53,40 +58,60 @@ class MyLogger:
     def _init_logging(self):
 
         log_global_data = []
-
         if not os.path.isfile(self.global_log_path):
             with open(self.global_log_path, "w") as f:
                 json.dump(log_global_data,f)
+        os.makedirs(self.logs_dir, exist_ok=True)
+
 
         with open(self.global_log_path, "r") as f:
             log_global_data = json.load(f)
 
 
-        last_log_number  = log_global_data[-1]["id"] if len(log_global_data) > 0  else 0
-        current_global_log_number = last_log_number + 1 
-        log_global_data.append({"id": current_global_log_number})
+        unfinished = [x for x in log_global_data if not x.get("finished", False)]
+        if unfinished:
+            current_entry = unfinished[-1]
+            current_global_log_number = current_entry['id']
+            log_path = current_entry['log_details_file']
+            self.logger.info(f"Resuming unfinished log {current_global_log_number} in {log_path}")
+        else:
+            current_global_log_number = log_global_data[-1]["id"] + 1 if len(log_global_data) > 0 else 1
+            datestr = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            log_path = self.logs_dir + f"/log_{current_global_log_number}_{datestr}.log"
+            new_entry = {
+                "id": current_global_log_number,
+                "start_time": datestr,
+                "finished": False,
+                "log_details_file": log_path
+            }
+            log_global_data.append(new_entry)
+            with open(self.global_log_path, "w") as f:
+                json.dump(log_global_data, f, indent=2)
 
-        with open(self.global_log_path, "w") as f:
-            json.dump(log_global_data, f)
 
-
-        os.makedirs(self.logs_dir, exist_ok=True)
-        datestr = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-        log_path = self.logs_dir + f"/log_{current_global_log_number}_{datestr}.log"
-        self.logger.setLevel(logging.INFO)
         fmt = logging.Formatter('%(message)s')
-
+        self.logger.setLevel(logging.INFO)
         console = logging.StreamHandler()
         console.setFormatter(fmt)
         self.logger.addHandler(console)
-        
-        file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+        file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
         file_handler.setFormatter(fmt)
         self.logger.addHandler(file_handler)
-
-
         return log_path,  log_global_data,current_global_log_number
+
+
+    def mark_finished(self):
+        with open(self.global_log_path, "r") as f:
+            logs = json.load(f)
+        for entry in logs:
+            if entry["id"] == self.current_global_log_number:
+                entry["finished"] = true
+                entry["end_time"] = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                break
+
+        with open(self.global_log_path, "w") as f:
+            json.dump(logs, f, indent=2)
+        self.logger.info(f"Log marked finished")
 
 
     def current_cpu_mem_usage(self):
@@ -122,7 +147,7 @@ class MyLogger:
 
 
 
-    def log_event(self, event_tag, t0=None, log_immediate=True, first_iteration_only=False, only_elapsed_time=False, epoch=None):
+    def log_event(self, event_tag, message=None, t0=None, log_immediate=True, first_iteration_only=False, log_memory=True, epoch=None):
         if first_iteration_only and event_tag in self.one_time_events_set:
             return True
 
@@ -132,51 +157,307 @@ class MyLogger:
         msg = f"[{self.tag}-{event_tag}] "
         if epoch:
             msg += f"-epoch_{epoch}"
+        if message: 
+            msg += f" | {message}"
 
         if t0:
             elapsed = time.time() - t0
             msg += f" | elapsed time: {elapsed:.5f}seconds "
 
 
-        if only_elapsed_time:
+        if not log_memory:
             return self.logger.info(f"\n{msg}") if log_immediate else self.messages.append(f"\n{msg}")
 
-        msg += f" | CPU Memory usage: {self.current_cpu_mem_usage():.1f}MB "
+        msg += f" \n\n | CPU Memory usage: {self.current_cpu_mem_usage():.1f}MB "
         if self.use_cuda:
             (free, total) = self.current_gpu_mem_usage()
             msg += f" | GPU memory total/free: {total:.1f}/{free:.1f}MB"
             (alloc, alloc_peak, res, res_peak) = self.current_gpu_stats()
             msg += f" | CUDA: allocated/peak: {alloc:.1f}/{alloc_peak:.1f}MB, reserved/peak {res:.1f}/{res_peak:.1f}MB"
+        msg += f'\n\n'
 
         return self.logger.info(f"\n{msg}") if log_immediate else self.messages.append(f"\n{msg}")
 
 
-
+# ====================
+# MY ENCODER
+# ====================
 class MyEncoder():
-    def __init__(self,encoder, use_cuda):
+    def __init__(self, use_cuda, cfg:ModelConfig):
+        self.cfg = cfg
         self.use_cuda = use_cuda
-        self.encoder = encoder
-        if self.use_cuda:
-            self.encoder = self.encoder.to("cuda")
-            # self.encoder = torch.compile(self.encoder)
-    def get_emb(self, input_ids_tensor, atts_tensor, use_amp=False, use_inference=False):
 
-        if use_inference:
-            with torch.inference_mode():
-                with torch.amp.autocast(device_type="cuda",enabled=(self.use_cuda and use_amp)):
-                    emb = self.encoder(input_ids=input_ids_tensor, attention_mask=atts_tensor)[0]  # token embeddings
+        model = AutoModel.from_pretrained(cfg.model_name, use_safetensors=True)
+        self.device = "cuda" if use_cuda else "cpu"
+        self.model = model.to(self.device)
+        cfg.hidden_size = self.model.config.hidden_size
+
+    def get_emb(self, input_ids_tensor, attention_mask_tensor, use_amp=False, use_no_grad=False):
+        context = torch.inference_mode() if use_no_grad else torch.enable_grad()
+        with context, torch.amp.autocast(device_type="cuda", enabled=(self.use_cuda and use_amp)):
+            # Hidden state, (batch, seq_len, hidden)
+            emb = self.model(input_ids=input_ids_tensor, attention_mask=attention_mask_tensor)[0]
+
+        # mean pooling
+        mask = attention_mask_tensor.unsqueeze(-1).float()
+        mean_emb = (emb * mask).sum(1) / mask.sum(1).clamp_min(1e-6)
+        cls_emb = emb[:, 0]
+
+        if self.cfg.pooling == 'mean':
+            ret = mean_emb
+        if self.cfg.pooling == 'cls':
+            ret = cls_emb
         else:
-            with torch.amp.autocast(device_type="cuda",enabled=(self.use_cuda and use_amp)):
-                emb = self.encoder(input_ids=input_ids_tensor, attention_mask=atts_tensor)[0]  # token embeddings
+            ret = 0.5 * (mean_emb + cls_emb)
 
-        mask = atts_tensor.unsqueeze(-1).expand(emb.size()).float()
-        embs = (emb * mask).sum(1) / mask.sum(1)  # mean pooling
-        den = mask.sum(1).clamp_min(1e-6)
-        embs = (emb * mask).sum(1) / den
-        return embs
-    def save_state(self, path):
-        self.encoder.save_pretrained(path)
+        if self.cfg.normalize:
+            ret = F.normalize(ret , p=2, dim=1)
+
+        return ret
+
+
+    def save_state(self, dir):
+        os.makedirs(dir, exist_ok=True)
+        self.encoder.save_pretrained(dir)
         return True
+
+    def load_state(self, state):
+        self.encoder.load_state_dict(state)
+
+    def get_state_dict(self):
+        return self.encoder.state_dict()
+
+# =======================
+#       MY MODEL
+#========================
+
+class MyModel(nn.Module):
+    def __init__(self, use_cuda, encoder : MyEncoder,  cfg:TrainingConfig ):
+        super().__init__()
+
+        self.use_cuda = use_cuda
+        self.cfg = cfg
+        self.encoder = encoder
+        self.criterion = info_nce_loss if cfg.loss_type == 'info_nce_loss' else marginal_nll
+        self.device = "cuda" if use_cuda else "cpu"
+
+        assert cfg.optimizer_name == 'AdamW', f'Currently only AdamW available'
+
+        self.optimizer = optim.AdamW(
+            self.encoder.model.parameters(),
+            lr=cfg.learning_rate,
+            weight_decay=cfg.weight_decay,
+            fused=self.use_cuda
+        )
+
+
+    def forward(self, query_tokens, candidates_tokens):
+
+        if self.use_cuda:
+            candidates_tokens["input_ids"] = candidates_tokens["input_ids"].to("cuda", non_blocking=True)
+            candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].to("cuda", non_blocking=True)
+            query_tokens["input_ids"] = query_tokens["input_ids"].to("cuda", non_blocking=True)
+            query_tokens["attention_mask"] = query_tokens["attention_mask"].to("cuda", non_blocking=True)
+
+        batch_size, topk, max_length = candidates_tokens["input_ids"].size()
+
+
+        candidates_tokens["input_ids"] = candidates_tokens["input_ids"].view(batch_size * topk, max_length)
+        candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].view(batch_size * topk, max_length)
+        #(batch_size * topk , h)
+        candidates_embs = self.encoder.get_emb(candidates_tokens["input_ids"], candidates_tokens["attention_mask"], use_amp=self.cfg.use_amp, use_no_grad=False)
+        #(b, h)
+        query_embeds = self.encoder.get_emb(query_tokens["input_ids"], query_tokens["attention_mask"], use_amp=self.cfg.use_amp, use_no_grad=False)
+
+
+
+        candidates_embs = candidates_embs.view(batch_size, topk, -1)
+        query_embeds = query_embeds.unsqueeze(1) # [batch_size, 1, hidden]
+
+        score = torch.bmm(query_embeds, candidates_embs.transpose(1, 2)).squeeze(1) #b, topk
+        del candidates_embs, query_embeds
+        #score (batch_size, topk)
+        return score
+    
+    def get_loss(self, outputs, targets):
+        """
+            outputs has shape (batch_size, topk)
+            targets if marginal_nll then (batch_size, topk) if other (batch_size)
+        """
+        if self.use_cuda:
+            targets = targets.cuda()
+            outputs = outputs.cuda()
+
+        outputs = outputs / self.cfg.loss_temperature
+        loss = self.criterion(outputs, targets)
+        return loss
+
+# ======================
+# MY TRAINER
+# ======================
+class Trainer:
+    def __init__(self, result_encoder_dir,  metric_logger: MyLogger, cfg:GlobalConfig):
+        self.cfg = cfg
+        self.result_encoder_dir = result_encoder_dir
+        os.makedirs(self.result_encoder_dir, exist_ok=True)
+        self.faiss_path  = result_encoder_dir + "/faiss_index.faiss"
+
+
+        self.tokens_paths = TokensPaths("dict", "queries")
+
+        self.logger: MyLogger = metric_logger
+        self.use_cuda = torch.cuda.is_available
+        self.device = "cuda"    if torch.cuda.is_available else "cpu"
+        self.scaler = torch.amp.GradScaler(enabled=cfg.train.use_amp)
+        self.encoder = MyEncoder(self.use_cuda, ModelConfig)
+        self.model = MyModel(self.use_cuda, self.encoder, TrainingConfig)
+        self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device)
+        self.dataset = MyDataset(self.tokens_paths, cfg)
+
+        num_training_steps = len(self.dataset) // self.cfg.train.batch_size * self.cfg.train.num_epochs
+        num_warmup_steps = int(0.1 * num_training_steps)
+
+        self.scheduler = get_linear_schedule_with_warmup(
+            self.model.optimizer,
+            num_warmup_steps= num_warmup_steps,
+            num_training_steps=num_training_steps
+        )
+
+        self.topk = cfg.train.topk
+        self.chkpnt_dir = os.path.join(result_encoder_dir, "checkpoints")
+        if cfg.train.save_checkpoints:
+            os.makedirs(self.chkpnt_dir, exist_ok=True)
+            self.chkpoint_path = os.path.join(self.chkpnt_dir, "last.pt")
+
+
+    def train_one_batch(self, dl_item):
+        self.model.optimizer.zero_grad(set_to_none=True)
+        with torch.amp.autocast(device_type="cuda", enabled=(self.use_cuda and self.cfg.train.use_amp)):
+            batch_x, batch_y = dl_item
+            batch_query_tokens, batch_candidates_tokens = batch_x
+            batch_scores = self.model(batch_query_tokens, batch_candidates_tokens)
+            loss = self.model.get_loss(batch_scores, batch_y)
+
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.model.optimizer)
+        self.scaler.update()
+        self.scheduler.step()
+
+        acc, mrr = compute_metrics(batch_scores.detach().cpu(), batch_y.cpu(), k=5)
+
+
+
+
+        if self.cfg.train.save_batch_output_pkl:
+            save_pkl(batch_x, f"self.cfg.paths.draft_dir/last_batch_x.pkl")
+            save_pkl(batch_y, f"self.cfg.paths.draft_dir/last_batch_y.pkl")
+            save_pkl(batch_scores, f"self.cfg.paths.draft_dir/last_batch_scores.pkl")
+
+        del batch_x, batch_y, batch_scores
+        return acc, mrr, loss.item()
+
+    def train_one_epoch(self, epoch):
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        t0 = time.time()
+        self.faiss.build_faiss(self.cfg.faiss.build_batch_size)
+        self.logger.log_event(f"Faiss index built finished", t0=t0, epoch = epoch)
+
+        t0 = time.time()
+        candidates_idxs = self.faiss.search_faiss(self.cfg.faiss.search_batch_size) # (queries_N, topk)
+        candidates_idxs = candidates_idxs.astype(np.int64)
+        self.logger.log_event("Search in faiss finished ", t0=t0, epoch=epoch)
+
+        self.dataset.set_candidates(candidates_idxs)
+        recall_faiss = self.faiss.compute_faiss_recall_at_k(candidates_idxs, self.dataset.query_cuis, self.dataset.dict_cuis, k=self.topk)
+        self.logger.log_event(f"Faiss recall@{self.topk}", message= f"{recall_faiss:.4f}", epoch=epoch, log_memory=False)
+
+        my_loader = torch.utils.data.DataLoader(
+            self.dataset,
+            batch_size=self.cfg.train.batch_size,
+            shuffle=True,
+            pin_memory=self.use_cuda,
+            num_workers=self.cfg.train.num_workers,
+            persistent_workers=self.use_cuda
+        )
+
+        t0 = time.time()
+        epoch_loss, epoch_acc, epoch_mrr = 0.0, 0.0, 0.0
+        n_batches = 0
+
+        for i, dl_item in tqdm(enumerate(my_loader), total=len(my_loader), desc=f"epoch@{epoch} - Training batches"):
+            acc, mrr, loss = self.train_one_batch(dl_item)
+            epoch_acc += acc
+            epoch_mrr += mrr
+            epoch_loss += loss
+            n_batches += 1
+
+        avg_loss = epoch_loss / max(1, n_batches)
+        avg_mrr = epoch_mrr / max(1, n_batches)
+        avg_acc = epoch_acc / max(1, n_batches)
+        self.logger.log_event(f"Epoch train finished", message=f"avg_loss: {avg_loss:.5f}, avg acc@5: {avg_acc}, avg mrr: {avg_mrr} ", t0=t0, epoch=epoch)
+        del my_loader
+        torch.cuda.empty_cache()
+        gc.collect()
+        return avg_loss
+
+
+    def restore_chkpoint(self, chkpt_path):
+        _chkpt = torch.load(chkpt_path, map_location=self.device)
+        chkpt = CheckPointModel(_chkpt)
+        self.model.encoder.load_state(chkpt.model_state)
+        self.model.optimizer.load_state_dict(chkpt.optimizer_state)
+        self.scheduler.load_state_dict(chkpt.scheduler_state)
+        self.scaler.load_state_dict(chkpt.scaler_state)
+        self.faiss.load_faiss_index(chkpt.faiss_index_path)
+        return chkpt.epoch
+
+    def save_checkpoint(self,epoch):
+        ckpt = {
+            "epoch": epoch,
+            "model_state": self.model.encoder.get_state_dict(),
+            "optimizer_state": self.model.optimizer.state_dict(),
+            "scheduler_state": self.scheduler.state_dict(),
+            "scaler_state": self.scaler.state_dict(),
+            "faiss_index_path": self.faiss.save_index(),
+        }
+        chkpt = CheckPointModel(ckpt)
+        torch.save(chkpt, self.chkpoint_path)
+        return True
+
+    def train(self):
+        t0 = time.time()
+        start_epoch = 1
+        if self.cfg.train.load_last_checkpoint:
+            if os.path.exists(self.chkpoint_path):
+                self.logger.log_event("checkpoint resotred", f" restoring checkpoint from: {self.chkpoint_path}", log_memory=False)
+                ckpt = torch.load(self.chkpoint_path, map_location=self.device)
+                start_epoch = self.restore_chkpoint(ckpt)
+
+        assert int(start_epoch) > 0 and int(start_epoch) < self.cfg.train.num_epochs 
+        for epoch in range(start_epoch, self.cfg.train.num_epochs + 1):
+            self.train_one_epoch(epoch)
+            self.save_checkpoint(epoch)
+
+        training_time = time.time() - t0
+        training_time_str = f"{int(training_time/60/60)}h, {int(training_time/60 % 60)}mins, {int(training_time % 60)}secs"
+
+        self.logger.log_global_data[-1] = LogDatModel
+        with open(self.cfg.logger.global_log_path, "w") as f:
+            json.dump(self.logger.log_global_data, f)
+        self.logger.mark_finished
+
+        self.encoder.save_state(self.result_encoder_dir)
+        self.save_checkpoint(epoch='last')
+
+        self.logger.log_event("Train finished", t0=t0, log_memory=False)
+        self.logger.log_event("Main info: " , message=self.logger.log_global_data[-1], log_memory=False)
+        self.logger.log_event("Log saved in: ", message=lg.log_path, log_memory=False)
+
+
+
+
 class TokensPaths():
     def __init__(self,dict_paths_key, query_paths_key):
         self.dict_inp_path = paths[dict_paths_key]['inp']
@@ -192,41 +473,46 @@ class TokensPaths():
 
 
 class MyFaiss():
-    def __init__(self,
-                 tokens_paths, 
-                 topk, encoder, 
-                 faiss_index_name, 
-                 faiss_cluster_samples_num, trained_faiss_index_path, use_cuda, device, add_index_use_fp16, fp16_embs_saved, fp16_faiss_search, 
-                 ):
-        self.topk = topk
-        self.tokens_paths = tokens_paths
-
+    def __init__(self, cfg: GlobalConfig, tokens_paths:TokensPaths, encoder : MyEncoder, save_index_path, use_cuda, device):
+        self.cfg = cfg.faiss
         self.use_cuda = use_cuda
-        self.device=device
+        self.device = device
+        self.tokens_paths = tokens_paths
         self.encoder = encoder
-        self.faiss_index_name =faiss_index_name
-        
-        self.add_index_use_fp16 = add_index_use_fp16
-        self.fp16_embs_saved = fp16_embs_saved
-        self.fp16_faiss_search = fp16_faiss_search
-        
-        self.faiss_cluster_samples_num = faiss_cluster_samples_num
-        self.trained_faiss_index_path = trained_faiss_index_path.replace("num", str(self.faiss_cluster_samples_num))
-        self.faiss_index = None
-        self.last_epoch_candidates_idxs = None
+        self.save_index_path = save_index_path
 
-    def set_last_epoch_candidates_idxs(self, cands_idxs):
-        self.last_epoch_candidates_idxs = np.array(cands_idxs, dtype=np.int64).flatten()
+        self.faiss_index_name =cfg.faiss.index_name
+        self.faiss_cluster_samples_num = cfg.faiss.cluster_samples
+
+        self.use_amp = cfg.train.use_amp
+        self.topk = cfg.train.topk
+        self.hidden_size = cfg.model.hidden_size
+
+        self.faiss_index = None
+
+    def load_faiss_index(self, path):
+        assert os.path.exists(path),f'Path faiss {path} not exists'
+        gpu_resources = faiss.StandardGpuResources()
+        index = faiss.read_index(path)
+        if self.use_cuda:
+            co = faiss.GpuClonerOptions()
+            co.allowCpuCoarseQuantizer = True
+            index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index, co)
+
+        self.faiss_index = index
+
+    def save_index(self):
+        faiss.write_index(faiss.index_gpu_to_cpu(self.faiss_index), self.save_index_path)
+        return self.save_index_path
 
 
     def train_sample(self, N, hidden_size):
-        
-        
+        assert self.faiss_index is not None
         dictionary_inputs =   np.memmap(self.tokens_paths.dict_inp_path,
             mode="r",
             dtype=np.int32,
             shape=self.tokens_paths.dict_shape
-        )  
+        )
         dictionary_att = np.memmap( self.tokens_paths.dict_att_path,
                 mode="r",
                 dtype=np.int32,
@@ -250,9 +536,7 @@ class MyFaiss():
             inp  = torch.as_tensor(dictionary_inputs[batch_idx], device=self.device)
             att = torch.as_tensor(dictionary_att[batch_idx],device=self.device)
 
-            batch_embeds = self.encoder.get_emb(inp, att, use_amp=self.add_index_use_fp16, use_inference=True)
-            if normalize_faiss:
-                batch_embeds = F.normalize(batch_embeds, p=2, dim=1)
+            batch_embeds = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
             batch_embeds = batch_embeds.contiguous()
             samples_embeds[cursor : cursor+(end-start)] = batch_embeds
             cursor += (end -start)
@@ -260,7 +544,10 @@ class MyFaiss():
         del dictionary_att, dictionary_inputs
         self.faiss_index.train(samples_embeds)
         del samples_embeds
-
+        torch.cuda.empty_cache()
+        gc.collect()
+    
+        
 
     def init_index(self, hidden_size, N):
         if self.faiss_index_name == 'IndexHNSWFlat':
@@ -269,19 +556,6 @@ class MyFaiss():
             assert N > 1_000_000, f"for {N}, it is better to use the flat index"
 
             gpu_resources = faiss.StandardGpuResources()
-
-
-            if os.path.exists(self.trained_faiss_index_path):
-                LOGGER.info(f"FAISS INDEX LOADED FROM CACHE FILE {self.trained_faiss_index_path}")
-                index = faiss.read_index(self.trained_faiss_index_path)
-                if self.use_cuda:
-                    co = faiss.GpuClonerOptions()
-                    co.allowCpuCoarseQuantizer = True
-                    index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index, co)
-
-                self.faiss_index = index
-                return True
-
             LOGGER.info(f"FAISS INDEX are being built and trained")
 
             num_clusters = int(math.sqrt(N) * 2)
@@ -292,16 +566,10 @@ class MyFaiss():
             quantizer.hnsw.efSearch = 64
 
             index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
-            index.useFloat16LookupTables = True
-            #train clusters on 320k random samples
+            index.useFloat16LookupTables = self.use_amp
             self.faiss_index = index
-
-
-
             self.train_sample(N, hidden_size)
             LOGGER.info("Training clusters finsihed ")
-            faiss.write_index(faiss.index_gpu_to_cpu(self.faiss_index), self.trained_faiss_index_path)
-            torch.cuda.empty_cache()
             return True
         else:
             assert N <= 1_000_000, f"for {N}, it is better to use the IndexHNSWFlat  index"
@@ -321,22 +589,14 @@ class MyFaiss():
 
 
     def build_faiss(self, batch_size):
-    
         N = self.tokens_paths.dict_shape[0]
         hidden_size = self.encoder.encoder.config.hidden_size
 
-        assert hidden_size is not None
         if self.faiss_index is None:
             self.init_index(hidden_size, N)
-
-
-
-
-
         assert self.faiss_index is not None
+
         self.faiss_index.reset()
-
-
 
         dictionary_inputs = np.memmap(
                 self.tokens_paths.dict_inp_path,
@@ -358,20 +618,12 @@ class MyFaiss():
 
         for start in tqdm(range(0, N, batch_size), desc="Building faiss index"):
             end = min(start + batch_size, N)
-
             inp  = torch.as_tensor(dictionary_inputs[start:end], device=self.device)
             att = torch.as_tensor(dictionary_att[start:end],device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=self.add_index_use_fp16, use_inference=True)
-            if normalize_faiss:
-                embs = F.normalize(embs, p=2, dim=1)
-
+            embs = self.encoder.get_emb(inp, att, use_amp=self.ise_amp, use_no_grad=True)
             self.faiss_index.add(embs.contiguous())
-
-
             del inp, att, embs
         del dictionary_inputs, dictionary_att
-
-
         torch.cuda.empty_cache()
         gc.collect()
 
@@ -383,15 +635,12 @@ class MyFaiss():
         candidates = np.zeros((N,self.topk))
         faiss_index = self.faiss_index
 
-
-        
         query_inputs = np.memmap(
                 self.tokens_paths.query_inp_path,
                 mode="r",
                 dtype=np.int32,
                 shape=self.tokens_paths.query_shape
-            )
-        
+        )
         query_att = np.memmap(
                   self.tokens_paths.query_att_path,
                 mode="r",
@@ -403,9 +652,7 @@ class MyFaiss():
             end = min(start + batch_size, N)
             inp  = torch.as_tensor(query_inputs[start:end], device=self.device)
             att = torch.as_tensor(query_att[start:end],device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=self.fp16_faiss_search, use_inference=True)
-            if normalize_faiss:
-                embs = F.normalize(embs, p=2, dim=1)
+            embs = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
             if self.use_cuda:
                 embs = embs.contiguous()
             else:
@@ -413,11 +660,10 @@ class MyFaiss():
 
             _, chunk_cand_idxs = faiss_index.search(embs, self.topk)
 
-            
             candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
             del inp, att, embs
         del query_inputs, query_att
-        gc.collect()        
+        gc.collect()
         return candidates
 
 
@@ -437,11 +683,11 @@ class MyFaiss():
 
 
 class MyDataset(Dataset):
-    def __init__(self,tokens_paths, topk, loss_type):
+    def __init__(self,tokens_paths: TokensPaths, cfg: GlobalConfig):
         self.tokens_paths  = tokens_paths
-        self.topk = topk
+        self.topk = cfg.train.topk
+        self.loss_type = cfg.train.loss_type
         self.all_candidates_idxs = None
-        self.loss_type = loss_type
 
 
         self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
@@ -528,73 +774,6 @@ class MyDataset(Dataset):
 
 
 
-class MyModel(nn.Module):
-    def __init__(self, encoder, learning_rate,weight_decay, use_cuda, loss_score_temperature, fp_16_model_forward):
-        super(MyModel, self).__init__()
-
-        self.encoder = encoder
-        self.learning_rate = learning_rate
-        self.use_cuda = use_cuda
-        self.fp_16_model_forward = fp_16_model_forward
-        self.optimizer = optim.AdamW(
-            self.encoder.encoder.parameters(),
-            lr=self.learning_rate,
-            weight_decay=weight_decay,
-            fused=self.use_cuda
-        )
-
-        self.criterion = info_nce_loss if args.loss_type == 'info_nce_loss' else marginal_nll
-        self.loss_score_temperature = loss_score_temperature
-
-
-
-    def forward(self, x_batch):
-        query_tokens, candidates_tokens = x_batch
-
-        if self.use_cuda:
-            candidates_tokens["input_ids"] = candidates_tokens["input_ids"].to("cuda", non_blocking=True)
-            candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].to("cuda", non_blocking=True)
-            query_tokens["input_ids"] = query_tokens["input_ids"].to("cuda", non_blocking=True)
-            query_tokens["attention_mask"] = query_tokens["attention_mask"].to("cuda", non_blocking=True)
-            
-        batch_size, topk, max_length = candidates_tokens["input_ids"].size()
-
-
-        #(b, h)
-        query_embeds = self.encoder.get_emb(query_tokens["input_ids"], query_tokens["attention_mask"], use_amp=self.fp_16_model_forward, use_inference=False)
-
-
-        candidates_tokens["input_ids"] = candidates_tokens["input_ids"].view(batch_size * topk, max_length)
-        candidates_tokens["attention_mask"] = candidates_tokens["attention_mask"].view(batch_size * topk, max_length)
-        #(batch_size * topk , h)
-        candidates_embs = self.encoder.get_emb(candidates_tokens["input_ids"], candidates_tokens["attention_mask"], use_amp=self.fp_16_model_forward, use_inference=False)
-
-        if normalize_faiss:
-            candidates_embs = F.normalize(candidates_embs, p=2, dim=1)
-
-
-        candidates_embs = candidates_embs.view(batch_size, topk, -1)
-        if normalize_faiss:
-            query_embeds = F.normalize(query_embeds, p=2, dim=1)
-        query_embeds = query_embeds.unsqueeze(1) # [batch_size, 1, hidden]
-
-        score = torch.bmm(query_embeds, candidates_embs.transpose(1, 2)).squeeze(1) #b, topk
-        del candidates_embs, query_embeds
-        #score (batch_size, topk)
-        return score
-    
-    def get_loss(self, outputs, targets):
-        """
-            outputs has shape (batch_size, topk)
-            targets if marginal_nll then (batch_size, topk) if other (batch_size)
-        """
-        if self.use_cuda:
-            targets = targets.cuda()
-            outputs = outputs.cuda()
-        loss = self.criterion(outputs, targets, self.loss_score_temperature)
-        return loss
-
-
 
 
 LOGGER = logging.getLogger()
@@ -603,188 +782,32 @@ LOGGER = logging.getLogger()
 
 
 
-def train(use_cuda, device, lg, args):
-    model = AutoModel.from_pretrained(args.encoder_model_name, use_safetensors=True)
-    # model = SentenceTransformer("all-MiniLM-L6-v2")
-    # transformer = model._first_module().auto_model  # the underlying Hugging Face model
+def train(logger,cfg):
     LOGGER.info("ARGS: ")
     LOGGER.info(args)
-
-    t0 = time.time()
-    encoder = MyEncoder(model, use_cuda)
-    tokens_paths = TokensPaths("dict", "queries")
-    my_faiss = MyFaiss(
-        tokens_paths=tokens_paths, 
-        topk= args.topk, 
-        encoder=encoder, 
-        faiss_index_name=args.faiss_index_name, 
-        faiss_cluster_samples_num = args.faiss_cluster_samples_num,
-        trained_faiss_index_path=config.trained_faiss_index_path,
-        use_cuda = use_cuda, 
-        device=device,
-         add_index_use_fp16 = args.add_index_use_fp16, fp16_embs_saved=args.fp16_embs_saved,
-         fp16_faiss_search=args.fp16_faiss_search, 
-    )
-    my_ds = MyDataset(tokens_paths, args.topk, loss_type=args.loss_type)
-    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, loss_score_temperature=config.loss_score_temperature, fp_16_model_forward=args.fp_16_model_forward)
-    scaler = torch.amp.GradScaler(device="cuda", enabled=use_cuda)
-
-
-    num_training_steps = len(my_ds) // args.train_batch_size * args.num_epochs
-    num_warmup_steps = int(0.1 * num_training_steps)
-
-    scheduler = get_linear_schedule_with_warmup(
-        my_model.optimizer,
-        num_warmup_steps=num_warmup_steps,
-        num_training_steps=num_training_steps
-    )
-    lg.log_event("Classes loaded", t0=t0)
-
-    LOGGER.info("Starting training..")
-
-    train_start_t0 = time.time()
-
-
+    
+    
     result_encoder_dir = config.result_encoders_dir + f"/encoder_{lg.current_global_log_number}/" 
-    os.makedirs(result_encoder_dir, exist_ok=True)
+    trainer = Trainer(result_encoder_dir, logger, cfg)
+    trainer.train()
+    # with open(config.global_log_path, "w") as f:
+    #     lg.log_global_data[-1]["training_log_name"] = args.training_log_name
+    #     lg.log_global_data[-1]["queries size"]  = len(my_ds.query_cuis)
+    #     lg.log_global_data[-1]["dictionary size"]  = len(my_ds.dict_cuis)
+    #     lg.log_global_data[-1]["finished time"]  = training_time_str
+    #     lg.log_global_data[-1]["log details file"]  = lg.log_path
+    #     lg.log_global_data[-1]["epochs"]  = args.num_epochs
+    #     lg.log_global_data[-1]["acc@5"]  = epoch_acc/n_eval
+    #     lg.log_global_data[-1]["mrr"]  = epoch_mrr/n_eval
+    #     lg.log_global_data[-1]["encoder dir"]  = result_encoder_dir
+    #     json.dump(lg.log_global_data,f)
 
-    ckpt_dir = os.path.join(result_encoder_dir, "checkpoints")
-    os.makedirs(ckpt_dir, exist_ok=True)
-    ckpt_path = os.path.join(ckpt_dir, "last.pt")
-
-
-
-    epoch_acc, epoch_mrr = 0.0, 0.0
-    
-    start_epoch = 0
-    if os.path.exists(ckpt_path):
-        LOGGER.info(f"Found checkpoint at {ckpt_path}, loading...")
-        ckpt = torch.load(ckpt_path, map_location=device)
-        my_model.encoder.encoder.load_state_dict(ckpt["model_state"])
-        my_model.optimizer.load_state_dict(ckpt["optimizer_state"])
-        scheduler.load_state_dict(ckpt["scheduler_state"])
-        scaler.load_state_dict(ckpt["scaler_state"])
-        start_epoch = ckpt["epoch"] + 1
-        LOGGER.info(f"Resuming training from epoch {start_epoch}")
-
-    for epoch in range(start_epoch, args.num_epochs):
-        torch.cuda.empty_cache()
-        gc.collect()
-        t0 = time.time()
-        if epoch % config.faiss_build_each_n_epochs == 0:
-            my_faiss.build_faiss(args.build_faiss_batch_size)
-            
-        lg.log_event("FAISS index built finished  ", t0=t0, epoch=epoch)
-
-        t0 = time.time()
-        cands_idxs = my_faiss.search_faiss(args.search_faiss_batch_size)
-        cands_idxs = cands_idxs.astype(np.int64)
-        lg.log_event("Search in faiss ", t0=t0, epoch=epoch)
-
-
-        t0 = time.time()
-        my_ds.set_candidates(cands_idxs) 
-        my_faiss.set_last_epoch_candidates_idxs(cands_idxs)
-
-        recall_at_topk = my_faiss.compute_faiss_recall_at_k(cands_idxs, my_ds.query_cuis, my_ds.dict_cuis, k=args.topk)
-        LOGGER.info(f"[Epoch {epoch}] FAISS recall@{args.topk}: {recall_at_topk:.4f}")
-
-        my_loader = torch.utils.data.DataLoader(
-            my_ds, 
-            batch_size=args.train_batch_size, 
-            shuffle=True, 
-            pin_memory=use_cuda, 
-            num_workers=args.num_workers,
-            persistent_workers=True)
-        lg.log_event("Data loader loadeed: ", t0=t0, epoch=epoch)
-
-
-        t0 = time.time()
-        train_loss, train_steps = 0.0, 0
-        epoch_acc, epoch_mrr = 0.0, 0.0
-        n_eval = 0
-        for i, (batch_x, batch_y) in tqdm(enumerate(my_loader), total=len(my_loader), desc="training batches", unit="batch" ):
-            my_model.optimizer.zero_grad(set_to_none=True)
-            if use_cuda:
-                with torch.amp.autocast("cuda"):
-                    batch_y_pred = my_model(batch_x)
-                    loss = my_model.get_loss(batch_y_pred, batch_y)
-
-
-
-                scaler.scale(loss).backward()
-                scaler.step(my_model.optimizer)
-                scaler.update()
-                scheduler.step()
-            else:
-                batch_y_pred = my_model(batch_x)  
-                loss = my_model.get_loss(batch_y_pred, batch_y) 
-                loss.backward()
-                my_model.optimizer.step()
-            train_loss += loss.item()
-            train_steps += 1
-
-            if args.save_debug_pkls:
-                os.makedirs("./data/draft",  exist_ok=True)
-                save_pkl(batch_x, "./data/draft/batch_x.pkl")
-                save_pkl(batch_y, "./data/draft/batch_y.pkl")
-                save_pkl(batch_y_pred, "./data/draft/batch_y_pred.pkl")
-
-            acc_k, mrr = compute_metrics(batch_y_pred.detach().cpu(), batch_y.cpu(), k=5)
-            epoch_acc += acc_k
-            epoch_mrr += mrr
-            n_eval += 1
-
-
-            del batch_x, batch_y, batch_y_pred
-
-        train_loss /= (train_steps + 1e-9)
-        lg.log_event("Epoch finished training", t0=t0, epoch=epoch)
-
-        ckpt = {
-            "epoch": epoch,
-            "model_state": my_model.encoder.encoder.state_dict(),
-            "optimizer_state": my_model.optimizer.state_dict(),
-            "scheduler_state": scheduler.state_dict(),
-            "scaler_state": scaler.state_dict(),
-        }
-        torch.save(ckpt, ckpt_path)
-        LOGGER.info(f"Checkpoint saved at epoch {epoch} -> {ckpt_path}")
-
-
-        LOGGER.info(f"Epoch {epoch}: avg_train_loss={train_loss:.5f}, acc@5={epoch_acc/n_eval:.5f}, mrr={epoch_mrr/n_eval:.5f}")
-        del my_loader
-        torch.cuda.empty_cache()
-        gc.collect()
-    
-
-
-    encoder.save_state(result_encoder_dir)
-    training_time = time.time()-t0
-    training_time_str = f"{int(training_time/60/60)}h, {int(training_time/60 % 60)}mins, {int(training_time % 60)}secs"
-
-
-    with open(config.global_log_path, "w") as f:
-        lg.log_global_data[-1]["training_log_name"] = args.training_log_name
-        lg.log_global_data[-1]["queries size"]  = len(my_ds.query_cuis)
-        lg.log_global_data[-1]["dictionary size"]  = len(my_ds.dict_cuis)
-        lg.log_global_data[-1]["finished time"]  = training_time_str
-        lg.log_global_data[-1]["log details file"]  = lg.log_path
-        lg.log_global_data[-1]["epochs"]  = args.num_epochs
-        lg.log_global_data[-1]["acc@5"]  = epoch_acc/n_eval
-        lg.log_global_data[-1]["mrr"]  = epoch_mrr/n_eval
-        lg.log_global_data[-1]["encoder dir"]  = result_encoder_dir
-        json.dump(lg.log_global_data,f)
-
-    LOGGER.info(f"main info are: {lg.log_global_data[-1]}")
-
-    LOGGER.info(f"LOGS saved in {lg.log_path} and in global with the name: {args.training_log_name}")
-    torch.cuda.empty_cache()
-    gc.collect()
-    lg.log_event("Train finished ", t0=train_start_t0)
     return result_encoder_dir
 
 def eval(use_cuda, device, lg, result_encoder_dir, args):
+    use_cuda = torch.cuda.is_available()
+    print(f"use cuda: {use_cuda}" )
+    device = torch.device("cuda" if use_cuda else 'cpu')
     
     model = AutoModel.from_pretrained(result_encoder_dir, use_safetensors=True)
     encoder = MyEncoder(model, use_cuda)
@@ -856,20 +879,17 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
     return avg_loss, avg_mrr, avg_acc
 
 if __name__ == "__main__":
-    args= parse_args()
-    use_cuda = torch.cuda.is_available()
-    print(f"use cuda: {use_cuda}" )
-    device = torch.device("cuda" if use_cuda else 'cpu')
-    lg = MyLogger(LOGGER, use_cuda, global_log_path=config.global_log_path, logs_dir=config.logs_dir, tag="train")
+    cfg :GlobalConfig = parse_args()
+    lg = MyLogger(LOGGER, cfg)
 
+    if not cfg.skip_train:
+        result_encoder_dir = train(lg, cfg)
 
-    result_encoder_dir = None
-    if not args.skip_train:
-        result_encoder_dir = train(use_cuda, device, lg, args)
-    if not args.skip_eval:
-        result_encoder_dir = result_encoder_dir if result_encoder_dir is not None else args.encoder_to_eval
-        assert result_encoder_dir is not None, f"encoder_to_eval should be specified" 
-        eval(use_cuda, device, lg, result_encoder_dir, args)
+    if not cfg.skip_eval:
+        print(f"Eval is not available now")
+        # result_encoder_dir = result_encoder_dir if result_encoder_dir is not None else args.encoder_to_eval
+        # assert result_encoder_dir is not None, f"encoder_to_eval should be specified" 
+        # eval(use_cuda, device, lg, result_encoder_dir, args)
 
 
 
@@ -878,7 +898,8 @@ if __name__ == "__main__":
 
 
 
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16 --loss_type='marginal_nll' --build_faiss_batch_size=4096 --faiss_cluster_samples_num=500_000 --save_debug_pkls --add_index_use_fp16 --fp16_faiss_search --fp16_embs_saved --fp_16_model_forward
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16
+
 
 
 
