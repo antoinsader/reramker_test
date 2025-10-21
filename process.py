@@ -648,9 +648,26 @@ def train(use_cuda, device, lg, args):
     result_encoder_dir = config.result_encoders_dir + f"/encoder_{lg.current_global_log_number}/" 
     os.makedirs(result_encoder_dir, exist_ok=True)
 
-    epoch_acc, epoch_mrr = 0.0, 0.0
+    ckpt_dir = os.path.join(result_encoder_dir, "checkpoints")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    ckpt_path = os.path.join(ckpt_dir, "last.pt")
 
-    for epoch in range(args.num_epochs):
+
+
+    epoch_acc, epoch_mrr = 0.0, 0.0
+    
+    start_epoch = 0
+    if os.path.exists(ckpt_path):
+        LOGGER.info(f"Found checkpoint at {ckpt_path}, loading...")
+        ckpt = torch.load(ckpt_path, map_location=device)
+        my_model.encoder.encoder.load_state_dict(ckpt["model_state"])
+        my_model.optimizer.load_state_dict(ckpt["optimizer_state"])
+        scheduler.load_state_dict(ckpt["scheduler_state"])
+        scaler.load_state_dict(ckpt["scaler_state"])
+        start_epoch = ckpt["epoch"] + 1
+        LOGGER.info(f"Resuming training from epoch {start_epoch}")
+
+    for epoch in range(start_epoch, args.num_epochs):
         torch.cuda.empty_cache()
         gc.collect()
         t0 = time.time()
@@ -724,7 +741,22 @@ def train(use_cuda, device, lg, args):
         train_loss /= (train_steps + 1e-9)
         lg.log_event("Epoch finished training", t0=t0, epoch=epoch)
 
+        ckpt = {
+            "epoch": epoch,
+            "model_state": my_model.encoder.encoder.state_dict(),
+            "optimizer_state": my_model.optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict(),
+            "scaler_state": scaler.state_dict(),
+        }
+        torch.save(ckpt, ckpt_path)
+        LOGGER.info(f"Checkpoint saved at epoch {epoch} -> {ckpt_path}")
+
+
         LOGGER.info(f"Epoch {epoch}: avg_train_loss={train_loss:.5f}, acc@5={epoch_acc/n_eval:.5f}, mrr={epoch_mrr/n_eval:.5f}")
+        del my_loader
+        torch.cuda.empty_cache()
+        gc.collect()
+    
 
 
     encoder.save_state(result_encoder_dir)
@@ -846,7 +878,7 @@ if __name__ == "__main__":
 
 
 
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=48 --loss_type='marginal_nll' --build_faiss_batch_size=4096 --faiss_cluster_samples_num=500_000 --save_debug_pkls --add_index_use_fp16 --fp16_faiss_search --fp16_embs_saved --fp_16_model_forward
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16 --loss_type='marginal_nll' --build_faiss_batch_size=4096 --faiss_cluster_samples_num=500_000 --save_debug_pkls --add_index_use_fp16 --fp16_faiss_search --fp16_embs_saved --fp_16_model_forward
 
 
 
