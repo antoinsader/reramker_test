@@ -205,7 +205,7 @@ def parse_args():
     parser.add_argument('--faiss_clustering_samples_size', help='Num of random samples to create faiss clusters', type=int, required=False)
 
     parser.add_argument('--encoder_to_eval', help='Dir of the encoder to eval', type=str)
-    parser.add_argument('--eval_faiss_dir', help='path to eval faiss', type=str)
+    parser.add_argument('--eval_faiss_path', help='path to eval faiss', type=str)
 
 
     parser.add_argument('--save_debug_pkls',  action="store_true")
@@ -248,9 +248,9 @@ def parse_args():
     if args.encoder_to_eval:
         assert os.path.isdir(args.encoder_to_eval)
         cfg.eval_encoder_dir = args.encoder_to_eval
-    if args.eval_faiss_dir:
-        assert os.path.isdir(args.eval_faiss_dir)
-        cfg.eval_faiss_dir = args.eval_faiss_dir
+    if args.eval_faiss_path:
+        assert os.path.exists(args.eval_faiss_path)
+        cfg.eval_faiss_dir = args.eval_faiss_path
 
     if args.save_debug_pkls:
         cfg.train.save_batch_output_pkl = args.save_debug_pkls
