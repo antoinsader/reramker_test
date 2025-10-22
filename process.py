@@ -878,6 +878,8 @@ class Evaluater:
         self.faiss_path = faiss_path
 
         cfg.paths.faiss_path = self.faiss_path
+        cfg.train.inject_hard_negatives = False
+        cfg.train.inject_hard_positives = False
 
         self.tokens_paths = TokensPaths("dict", "test")
         self.use_cuda = torch.cuda.is_available()
