@@ -931,7 +931,7 @@ class Evaluater:
                 batch_pred = self.model(query_tokens, candidate_tokens)  # [batch_size, hidden_size]
                 loss = self.model.get_loss(batch_pred, batch_y)
 
-                res = compute_metrics(batch_pred.detach().cpu(), batch_y.cpu(), multiple_ks=[1, 2,4, 5, 7, 10, 12, 15, 17, 20])
+                res = compute_metrics_eval(batch_pred.detach().cpu(), batch_y.cpu(), multiple_ks=[1, 2,4, 5, 7, 10, 12, 15, 17, 20])
                 res["loss"] = loss.item()
                 all_metrics.append(res)
                 total_samples += batch_size
