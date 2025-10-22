@@ -894,7 +894,6 @@ class Evaluater:
 
     def eval(self):
         self.model.eval()
-        self.faiss.build_faiss(self.cfg.faiss.build_batch_size)
         cands_idxs = self.faiss.search_faiss(self.cfg.faiss.search_batch_size) # (queries_N, topk)
         cands_idxs = cands_idxs.astype(np.int64)
         self.dataset.set_candidates(cands_idxs)
@@ -906,7 +905,7 @@ class Evaluater:
             num_workers=self.cfg.train.num_workers,
             persistent_workers=False
         )
-        
+
         total_loss = 0.0
         total_mrr = 0.0
         total_acc = 0.0
@@ -940,7 +939,7 @@ class Evaluater:
         avg_loss = total_loss / total_samples
         avg_mrr = total_mrr / n_eval
         avg_acc = total_acc / n_eval
-
+        print(f"Eval finished with loss={avg_loss:.5f}, MRR={avg_mrr:.5f}, acc@{self.topk} ={avg_acc:.5f}")
         LOGGER.info(f"[Eval] Loss={avg_loss:.5f}, MRR={avg_mrr:.5f}, ACC@{self.topk}={avg_acc:.5f}")
         return avg_loss, avg_mrr, avg_acc
 

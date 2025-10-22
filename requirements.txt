@@ -1,0 +1,7 @@
+torch
+faiss-gpu-cu12
+tqdm 
+transformers 
+requests 
+psutil 
+torchmetrics
