@@ -1,0 +1,223 @@
+USING IndexHNSWFlat index
+FAISS INDEX are being built and trained
+Training clusters finsihed 
+
+[train-Faiss index built finished] -epoch_1 | elapsed time: 451.14467seconds  
+
+ | CPU Memory usage: 2337.6MB  | GPU memory total/free: 24080.9/21343.8MB | CUDA: allocated/peak: 421.8/5016.5MB, reserved/peak 468.0/6918.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_1 | elapsed time: 3.32806seconds  
+
+ | CPU Memory usage: 2382.2MB  | GPU memory total/free: 24080.9/18039.8MB | CUDA: allocated/peak: 421.8/5016.5MB, reserved/peak 3772.0/6918.0MB
+
+
+
+[train-Faiss recall@20] -epoch_1 | 0.4132
+
+[train-Epoch train finished] -epoch_1 | avg_loss: 1.01318, avg acc@5: 0.9015458077047588, avg mrr: 0.7630569594410672  | elapsed time: 528.77013seconds  
+
+ | CPU Memory usage: 2661.0MB  | GPU memory total/free: 24080.9/16929.8MB | CUDA: allocated/peak: 1691.0/5016.5MB, reserved/peak 4872.0/6918.0MB
+
+
+
+[train-Faiss index built finished] -epoch_2 | elapsed time: 315.46935seconds  
+
+ | CPU Memory usage: 2700.7MB  | GPU memory total/free: 24080.9/17815.8MB | CUDA: allocated/peak: 1691.0/6299.2MB, reserved/peak 4000.0/9860.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_2 | elapsed time: 3.75599seconds  
+
+ | CPU Memory usage: 2700.7MB  | GPU memory total/free: 24080.9/15115.8MB | CUDA: allocated/peak: 1691.0/6299.2MB, reserved/peak 6700.0/9860.0MB
+
+
+
+[train-checkpoint resotred]  |  restoring checkpoint from: ./output/encoder_1/checkpoints/last.pt
+
+[train-checkpoint resotred]  |  restoring checkpoint from: ./output/encoder_1/checkpoints/last.pt
+
+[train-Faiss index built finished] -epoch_2 | elapsed time: 340.13742seconds  
+
+ | CPU Memory usage: 2322.2MB  | GPU memory total/free: 24080.9/20385.8MB | CUDA: allocated/peak: 1245.6/5866.8MB, reserved/peak 1440.0/7890.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_2 | elapsed time: 3.82679seconds  
+
+ | CPU Memory usage: 2371.3MB  | GPU memory total/free: 24080.9/17379.8MB | CUDA: allocated/peak: 1245.6/5866.8MB, reserved/peak 4446.0/7890.0MB
+
+
+
+[train-Faiss recall@20] -epoch_2 | 0.4797
+
+[train-Epoch train finished] -epoch_2 | avg_loss: 0.88769, avg acc@5: 0.9290021042408546, avg mrr: 0.7999081964691579  | elapsed time: 537.38239seconds  
+
+ | CPU Memory usage: 2642.8MB  | GPU memory total/free: 24080.9/16901.8MB | CUDA: allocated/peak: 1678.6/5866.8MB, reserved/peak 4914.0/7890.0MB
+
+
+
+[train-Faiss index built finished] -epoch_3 | elapsed time: 339.99283seconds  
+
+ | CPU Memory usage: 2799.7MB  | GPU memory total/free: 24080.9/19081.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 2740.0/8600.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_3 | elapsed time: 4.68037seconds  
+
+ | CPU Memory usage: 2799.7MB  | GPU memory total/free: 24080.9/16381.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5440.0/8600.0MB
+
+
+
+[train-Faiss recall@20] -epoch_3 | 0.5133
+
+[train-Epoch train finished] -epoch_3 | avg_loss: 0.93296, avg acc@5: 0.9248340887018452, avg mrr: 0.7986554062605594  | elapsed time: 541.92917seconds  
+
+ | CPU Memory usage: 2800.5MB  | GPU memory total/free: 24080.9/16307.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5514.0/8600.0MB
+
+
+
+[train-Faiss index built finished] -epoch_4 | elapsed time: 339.00906seconds  
+
+ | CPU Memory usage: 2801.2MB  | GPU memory total/free: 24080.9/19093.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 2740.0/8600.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_4 | elapsed time: 7.91376seconds  
+
+ | CPU Memory usage: 2801.2MB  | GPU memory total/free: 24080.9/16393.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5440.0/8600.0MB
+
+
+
+[train-Faiss recall@20] -epoch_4 | 0.5515
+
+[train-Epoch train finished] -epoch_4 | avg_loss: 0.81521, avg acc@5: 0.9395637746843639, avg mrr: 0.8412040384300024  | elapsed time: 544.36229seconds  
+
+ | CPU Memory usage: 2802.3MB  | GPU memory total/free: 24080.9/16319.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5514.0/8600.0MB
+
+
+
+[train-Faiss index built finished] -epoch_5 | elapsed time: 339.17181seconds  
+
+ | CPU Memory usage: 2742.0MB  | GPU memory total/free: 24080.9/19097.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 2740.0/8600.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_5 | elapsed time: 6.73869seconds  
+
+ | CPU Memory usage: 2742.0MB  | GPU memory total/free: 24080.9/16397.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5440.0/8600.0MB
+
+
+
+[train-Faiss recall@20] -epoch_5 | 0.5901
+
+[train-Epoch train finished] -epoch_5 | avg_loss: 0.69314, avg acc@5: 0.9585828747167368, avg mrr: 0.8701732595983618  | elapsed time: 545.22209seconds  
+
+ | CPU Memory usage: 2748.3MB  | GPU memory total/free: 24080.9/16323.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5514.0/8600.0MB
+
+
+
+[train-Faiss index built finished] -epoch_6 | elapsed time: 339.35503seconds  
+
+ | CPU Memory usage: 2786.1MB  | GPU memory total/free: 24080.9/19113.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 2740.0/8600.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_6 | elapsed time: 7.59023seconds  
+
+ | CPU Memory usage: 2786.1MB  | GPU memory total/free: 24080.9/16413.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5440.0/8600.0MB
+
+
+
+[train-Faiss recall@20] -epoch_6 | 0.5998
+
+[train-Epoch train finished] -epoch_6 | avg_loss: 0.60484, avg acc@5: 0.9688005827128521, avg mrr: 0.8951331432245424  | elapsed time: 544.52670seconds  
+
+ | CPU Memory usage: 2786.2MB  | GPU memory total/free: 24080.9/16339.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5514.0/8600.0MB
+
+
+
+[train-Faiss index built finished] -epoch_7 | elapsed time: 339.06332seconds  
+
+ | CPU Memory usage: 2786.2MB  | GPU memory total/free: 24080.9/19113.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 2740.0/8600.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_7 | elapsed time: 7.49426seconds  
+
+ | CPU Memory usage: 2786.2MB  | GPU memory total/free: 24080.9/16413.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5440.0/8600.0MB
+
+
+
+[train-Faiss recall@20] -epoch_7 | 0.6584
+
+[train-Epoch train finished] -epoch_7 | avg_loss: 0.54379, avg acc@5: 0.9743242149562965, avg mrr: 0.9099363287209306  | elapsed time: 543.58507seconds  
+
+ | CPU Memory usage: 2786.3MB  | GPU memory total/free: 24080.9/16339.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5514.0/8600.0MB
+
+
+
+[train-Faiss index built finished] -epoch_8 | elapsed time: 339.44383seconds  
+
+ | CPU Memory usage: 2786.5MB  | GPU memory total/free: 24080.9/19101.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 2740.0/8600.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_8 | elapsed time: 8.15878seconds  
+
+ | CPU Memory usage: 2786.5MB  | GPU memory total/free: 24080.9/16401.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5440.0/8600.0MB
+
+
+
+[train-Faiss recall@20] -epoch_8 | 0.6822
+
+[train-Epoch train finished] -epoch_8 | avg_loss: 0.48668, avg acc@5: 0.9781280349627711, avg mrr: 0.9221534956140504  | elapsed time: 541.58365seconds  
+
+ | CPU Memory usage: 2788.5MB  | GPU memory total/free: 24080.9/16327.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5514.0/8600.0MB
+
+
+
+[train-Faiss index built finished] -epoch_9 | elapsed time: 338.87858seconds  
+
+ | CPU Memory usage: 2789.2MB  | GPU memory total/free: 24080.9/19095.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 2740.0/8600.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_9 | elapsed time: 6.77700seconds  
+
+ | CPU Memory usage: 2789.2MB  | GPU memory total/free: 24080.9/16395.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5440.0/8600.0MB
+
+
+
+[train-Faiss recall@20] -epoch_9 | 0.7046
+
+[train-Epoch train finished] -epoch_9 | avg_loss: 0.43955, avg acc@5: 0.9800906442214309, avg mrr: 0.9309551951100338  | elapsed time: 543.93910seconds  
+
+ | CPU Memory usage: 2789.3MB  | GPU memory total/free: 24080.9/16321.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5514.0/8600.0MB
+
+
+
+[train-Faiss index built finished] -epoch_10 | elapsed time: 339.54730seconds  
+
+ | CPU Memory usage: 2744.5MB  | GPU memory total/free: 24080.9/19093.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 2740.0/8600.0MB
+
+
+
+[train-Search in faiss finished ] -epoch_10 | elapsed time: 8.65470seconds  
+
+ | CPU Memory usage: 2744.5MB  | GPU memory total/free: 24080.9/16393.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5440.0/8600.0MB
+
+
+
+[train-Faiss recall@20] -epoch_10 | 0.7235
+
+[train-Epoch train finished] -epoch_10 | avg_loss: 0.41224, avg acc@5: 0.982012787309809, avg mrr: 0.9370572977081643  | elapsed time: 544.57134seconds  
+
+ | CPU Memory usage: 2744.8MB  | GPU memory total/free: 24080.9/16319.8MB | CUDA: allocated/peak: 1678.6/6294.8MB, reserved/peak 5514.0/8600.0MB
+
+
+
+[train-Train finished]  | elapsed time: 8090.62923seconds 
+
+[train-Main info: ]  | {'id': 1, 'start_time': '2025-10-22_03-00-12', 'finished': True, 'log_details_file': './logs/log_1_2025-10-22_03-00-12.log', 'end_date': '2025-10-22_05-40-46', 'training_log_name': 'big_dictionary', 'queries_size': 49410, 'dictionary_size': 4263543, 'trained_period': '2h, 14mins, 47secs', 'epochs': 10, 'last_faiss_recall@15': 0.7235175065776158, 'last_avg_acc_5': 0.982012787309809, 'last_avg_mrr': 0.9370572977081643, 'last_avg_loss': 0.4122368606713722, 'result_encoder_dir': './output/encoder_1/'}

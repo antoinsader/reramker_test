@@ -1,1 +1,19 @@
-[{"id": 1}, {"id": 2, "training_log_name": "big_dictionary", "queries size": 49410, "dictionary size": 4263543, "finished time": "0h, 7mins, 13secs", "log details file": "./logs/log_2_2025-10-19_21-05-34.log", "epochs": 10, "acc@5": 0.0, "mrr": 0.0, "encoder dir": "./output/encoder_2/"}]
+[
+  {
+    "id": 1,
+    "start_time": "2025-10-22_03-00-12",
+    "finished": true,
+    "log_details_file": "./logs/log_1_2025-10-22_03-00-12.log",
+    "end_date": "2025-10-22_05-40-46",
+    "training_log_name": "big_dictionary",
+    "queries_size": 49410,
+    "dictionary_size": 4263543,
+    "trained_period": "2h, 14mins, 47secs",
+    "epochs": 10,
+    "last_faiss_recall@15": 0.7235175065776158,
+    "last_avg_acc_5": 0.982012787309809,
+    "last_avg_mrr": 0.9370572977081643,
+    "last_avg_loss": 0.4122368606713722,
+    "result_encoder_dir": "./output/encoder_1/"
+  }
+]
