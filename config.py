@@ -112,10 +112,10 @@ class ModelConfig:
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 10
+    num_epochs: int = 13
     batch_size: int = 16
-    learning_rate: float = 1e-4
-    weight_decay: float = 0.01
+    learning_rate: float = 5e-5
+    weight_decay: float = 0.001
     num_workers: int = 8
     topk: int = 20
     loss_type: str = "marginal_nll" # info_nce_loss
@@ -135,7 +135,7 @@ class TrainingConfig:
 
 @dataclass
 class FaissConfig:
-    cluster_samples: int = 1_800_000
+    cluster_samples: int = 1_000_000
     build_batch_size: int = 4096
     search_batch_size: int = 4096
     index_name: str = "IndexHNSWFlat"

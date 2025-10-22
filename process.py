@@ -425,7 +425,7 @@ class Trainer:
     def train_one_epoch(self, epoch):
         torch.cuda.empty_cache()
         gc.collect()
-
+        stage_times = {}
         if epoch <= self.cfg.train.freeze_lower_layer_epoch_max:
             self.encoder.freeze_lower_layers(max(0, 7 - epoch ))
         else:
@@ -435,12 +435,19 @@ class Trainer:
 
         t0 = time.time()
         self.faiss.build_faiss(self.cfg.faiss.build_batch_size)
-        self.logger.log_event(f"Faiss index built finished", t0=t0, epoch = epoch)
+        stage_times["faiss_build"] = time.time() - t0
+        # self.logger.log_event(f"Faiss index built finished", t0=t0, epoch = epoch)
+
+        self.logger.log_event("FAISS build peak",
+                message=(f"alloc_peak={torch.cuda.max_memory_allocated()/1024**2:.1f}MB, "
+                        f"res_peak={torch.cuda.max_memory_reserved()/1024**2:.1f}MB"),
+                log_memory=False, epoch=epoch)
 
         t0 = time.time()
         candidates_idxs = self.faiss.search_faiss(self.cfg.faiss.search_batch_size) # (queries_N, topk)
         candidates_idxs = candidates_idxs.astype(np.int64)
-        self.logger.log_event("Search in faiss finished ", t0=t0, epoch=epoch)
+        # self.logger.log_event("Search in faiss finished ", t0=t0, epoch=epoch)
+        stage_times["faiss_search"] = time.time() - t0
 
         self.dataset.set_candidates(candidates_idxs)
         recall_faiss = self.faiss.compute_faiss_recall_at_k(candidates_idxs, self.dataset.query_cuis, self.dataset.dict_cuis, k=self.topk)
@@ -470,7 +477,24 @@ class Trainer:
         avg_loss = epoch_loss / max(1, n_batches)
         avg_mrr = epoch_mrr / max(1, n_batches)
         avg_acc = epoch_acc / max(1, n_batches)
+        stage_times["train_batches"] = time.time() - t0
         self.logger.log_event(f"Epoch train finished", message=f"avg_loss: {avg_loss:.5f}, avg acc@5: {avg_acc}, avg mrr: {avg_mrr} ", t0=t0, epoch=epoch)
+        alloc, alloc_peak, res, res_peak = self.logger.current_gpu_stats()
+        free, total = self.logger.current_gpu_mem_usage()
+        used = total - free
+        self.logger.log_event(
+            "Epoch summary",
+            message=(f"GPU used={used:.1f}MB "
+                    f"| alloc={alloc:.1f}MB (peak {alloc_peak:.1f}) "
+                    f"| reserved={res:.1f}MB (peak {res_peak:.1f}) "
+                    f"| loss_temp={self.cfg.train.loss_temperature:.3f}"),
+            epoch=epoch,
+            log_memory=False,
+        )
+        total_time = sum(stage_times.values())
+        stage_str = " | ".join([f"{k}:{v/total_time*100:.1f}%" for k,v in stage_times.items()])
+        self.logger.log_event("Epoch timing breakdown", message=stage_str, epoch=epoch, log_memory=False)
+
         del my_loader
         torch.cuda.empty_cache()
         gc.collect()
@@ -509,7 +533,10 @@ class Trainer:
         avg_loss, avg_mrr, avg_acc, last_faiss_recall = 0.0, 0.0, 0.0, 0.0
         assert int(start_epoch) > 0 and int(start_epoch) < self.cfg.train.num_epochs 
         for epoch in range(start_epoch, self.cfg.train.num_epochs + 1):
+            if self.use_cuda:
+                torch.cuda.reset_peak_memory_stats()
             self.cfg.train.loss_temperature = max(0.05, 0.15 * (0.88 ** (epoch - 1)))
+
             avg_loss, avg_mrr, avg_acc, last_faiss_recall = self.train_one_epoch(epoch)
             if self.cfg.train.save_checkpoints:
                 self.save_checkpoint(epoch)
@@ -533,7 +560,14 @@ class Trainer:
         self.logger.log_event("Train finished", t0=t0, log_memory=False)
         self.logger.log_event("Main info: " , message=self.checkpointing.current_entry, log_memory=False)
 
-
+        self.logger.log_event(
+            "Final summary",
+            message=(f"epochs={self.cfg.train.num_epochs} | "
+                    f"final_loss={avg_loss:.4f} | final_mrr={avg_mrr:.4f} | "
+                    f"final_acc@5={avg_acc:.4f} | final_faiss_recall={last_faiss_recall:.4f} | "
+                    f"loss_temp={self.cfg.train.loss_temperature:.3f}"),
+            log_memory=False
+        )
 
 
 class TokensPaths():
