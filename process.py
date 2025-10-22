@@ -156,6 +156,20 @@ class MyEncoder():
 
         return ret
 
+    def freeze_lower_layers(self, num_layers_to_freeze=6):
+        """
+        freeze first num_layers_to_freeze encoder layers
+        """
+        # valid for bert derived encoders
+        for name, param in self.encoder.named_parameters():
+            if "encoder.layer." in name:
+                layer_id = int(name.split(".")[2])
+                param.requires_grad = layer_id >= num_layers_to_freeze
+
+    def unfreeze_all(self):
+        for param in self.encoder.parameters():
+            param.requires_grad = True
+
 
     def save_state(self, dir):
         os.makedirs(dir, exist_ok=True)
@@ -324,6 +338,7 @@ class MyModel(nn.Module):
         loss = self.criterion(outputs, targets)
         return loss
 
+
 # ======================
 # MY TRAINER
 # ======================
@@ -396,6 +411,13 @@ class Trainer:
         torch.cuda.empty_cache()
         gc.collect()
 
+        if epoch <= self.cfg.train.freeze_lower_layer_epoch_max:
+            self.encoder.freeze_lower_layers()
+        else:
+            self.encoder.unfreeze_all() 
+        
+
+
         t0 = time.time()
         self.faiss.build_faiss(self.cfg.faiss.build_batch_size)
         self.logger.log_event(f"Faiss index built finished", t0=t0, epoch = epoch)
@@ -421,6 +443,7 @@ class Trainer:
         t0 = time.time()
         epoch_loss, epoch_acc, epoch_mrr = 0.0, 0.0, 0.0
         n_batches = 0
+
 
         for i, dl_item in tqdm(enumerate(my_loader), total=len(my_loader), desc=f"epoch@{epoch} - Training batches"):
             acc, mrr, loss = self.train_one_batch(dl_item)
