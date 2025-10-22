@@ -86,6 +86,17 @@ class MyLogger:
         return (alloc, alloc_peak, res, res_peak)
 
 
+    def log_gpu_stats_step(self, step):
+        if not self.use_cuda:
+            return
+        alloc = torch.cuda.memory_allocated(self.device) / 1024**2
+        res = torch.cuda.memory_reserved(self.device) / 1024**2
+        peak_alloc = torch.cuda.max_memory_allocated(self.device) / 1024**2
+        peak_res = torch.cuda.max_memory_reserved(self.device) / 1024**2
+        self.logger.info(
+            f"[GPU-MEM] step={step} | alloc={alloc:.1f}MB | res={res:.1f}MB | "
+            f"peak_alloc={peak_alloc:.1f}MB | peak_res={peak_res:.1f}MB"
+        )
 
     def log_event(self, event_tag, message=None, t0=None, log_immediate=True, first_iteration_only=False, log_memory=True, epoch=None):
         if first_iteration_only and event_tag in self.one_time_events_set:
@@ -375,7 +386,8 @@ class Trainer:
         self.chkpoint_path = cfg.paths.checkpoint_path
         
 
-    def train_one_batch(self, dl_item):
+    def train_one_batch(self, dl_item, i):
+        
         self.model.optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast(device_type="cuda", enabled=(self.use_cuda and self.cfg.train.use_amp)):
             batch_x, batch_y = dl_item
@@ -403,6 +415,9 @@ class Trainer:
             save_pkl(batch_x, f"{self.cfg.paths.draft_dir}/last_batch_x.pkl")
             save_pkl(batch_y, f"{self.cfg.paths.draft_dir}/last_batch_y.pkl")
             save_pkl(batch_scores, f"{self.cfg.paths.draft_dir}/last_batch_scores.pkl")
+
+        if i % 100 == 0:
+            self.logger.log_gpu_stats_step(i)
 
         del batch_x, batch_y, batch_scores
         return acc, mrr, loss.item()
@@ -446,7 +461,7 @@ class Trainer:
 
 
         for i, dl_item in tqdm(enumerate(my_loader), total=len(my_loader), desc=f"epoch@{epoch} - Training batches"):
-            acc, mrr, loss = self.train_one_batch(dl_item)
+            acc, mrr, loss = self.train_one_batch(dl_item, i)
             epoch_acc += acc
             epoch_mrr += mrr
             epoch_loss += loss
