@@ -995,6 +995,9 @@ if __name__ == "__main__":
 
 # python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16
 
+# eval:
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16 --skip_train --encoder_to_eval='./output/encoder_1'  --eval_faiss_dir='./output/faiss_index.faiss'
+
 
 
 

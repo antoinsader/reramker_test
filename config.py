@@ -205,6 +205,7 @@ def parse_args():
     parser.add_argument('--faiss_clustering_samples_size', help='Num of random samples to create faiss clusters', type=int, required=False)
 
     parser.add_argument('--encoder_to_eval', help='Dir of the encoder to eval', type=str)
+    parser.add_argument('--eval_faiss_dir', help='path to eval faiss', type=str)
 
 
     parser.add_argument('--save_debug_pkls',  action="store_true")
