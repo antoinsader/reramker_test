@@ -204,6 +204,7 @@ class CheckPointing:
         log_obj = {}
         unfinished = [x for x in log_global_data if not x.get("finished", False)]
         if unfinished:
+            LOGGER.info("Caught unfinihsed")
             current_entry = unfinished[-1]
             self.current_global_log_number = current_entry['id']
             self.log_path = current_entry['log_details_file']
@@ -784,7 +785,7 @@ class MyDataset(Dataset):
 
         inj_hard_negatives = (self.last_epoch_cands is not None) and self.inject_hard_negatives
 
-        if self.last_epoch_cands:
+        if self.last_epoch_cands is None:
             return self.all_candidates_idxs
 
         num_queries, topk = self.all_candidates_idxs.shape
