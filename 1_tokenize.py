@@ -5,8 +5,8 @@ from datasets import Dataset
 from functools import partial
 from transformers import AutoTokenizer
 
-from config import paths, max_length, tokenizer_name, dictionary_path, queries_dir, test_queries_dir
-
+from config import paths
+from config import GlobalConfig
 from data import load_dictionary, load_queries
 
 def tokenize_fn(batch, tokenizer, max_length):
@@ -20,7 +20,9 @@ def tokenize_fn(batch, tokenizer, max_length):
 
 
 
-def tt(cuis, names, paths_key, tokenizer ):
+def tt(cuis, names, paths_key, tokenizer, cfg ):
+    max_length = cfg.tokenize.max_length
+    
     batch_size = 1048
     np.save(paths[paths_key]['ids'] , cuis)
     names_size = len(names)
@@ -61,23 +63,31 @@ def tt(cuis, names, paths_key, tokenizer ):
     print("tokenized")
     return True
 
+cfg = GlobalConfig()
 
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name)
 
-train_dictionary=load_dictionary(dictionary_path)
-train_queries = load_queries(queries_dir)
-test_queries = load_queries(test_queries_dir)
-
-
+train_dictionary=load_dictionary(cfg.paths.dictionary_raw_path)
 dictionary_names, dictionary_cuis = [row[0] for row in train_dictionary], [row[1] for row in train_dictionary]
-query_names, query_cuis = [row[0] for row in train_queries], [row[1] for row in train_queries]
-test_names, test_cuis = [row[0] for row in test_queries], [row[1] for row in test_queries]
-
 dictionary_cuis = [d.replace("MESH:", "") for d in dictionary_cuis]
+tt(dictionary_cuis, dictionary_names, 'dict', tokenizer, cfg)
+
+
+
+
+train_queries = load_queries(cfg.paths.queries_raw_dir)
+query_names, query_cuis = [row[0] for row in train_queries], [row[1] for row in train_queries]
 query_cuis = [d.replace("MESH:", "") for d in query_cuis]
-test_cuis = [d.replace("MESH:", "") for d in test_cuis]
+tt(query_cuis, query_names, 'queries', tokenizer, cfg)
 
 
-tt(query_cuis, query_names, 'queries', tokenizer)
-tt(dictionary_cuis, dictionary_names, 'dict', tokenizer)
-# tt(test_cuis, test_names, 'test', tokenizer)
+
+# test_queries = load_queries(test_queries_dir)
+# test_names, test_cuis = [row[0] for row in test_queries], [row[1] for row in test_queries]
+# test_cuis = [d.replace("MESH:", "") for d in test_cuis]
+# tt(test_cuis, test_names, 'test', tokenizer, cfg)
+
+
+
+
+

@@ -60,6 +60,9 @@ class PathsConfig:
     draft_dir: str = "./data/draft"
 
     global_log_path: str = f"./logs/logger_all.json"
+    
+    dictionary_raw_path = "./data/raw/train_dictionary.txt"
+    queries_dir = "./data/raw/traindev"
 
     result_encoder_dir = None
     checkpoint_dir = None
