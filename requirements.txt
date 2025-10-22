@@ -2,6 +2,7 @@ torch
 faiss-gpu-cu12
 tqdm 
 transformers 
+datasets
 requests 
 psutil 
 torchmetrics

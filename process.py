@@ -1099,7 +1099,7 @@ if __name__ == "__main__":
 
 
 
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=32  --train_batch_size=32 build_faiss_batch_size=6000
 
 # eval:
 # python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16 --skip_train --encoder_to_eval='./output/encoder_1'  --eval_faiss_path='./output/encoder_1/faiss_index.faiss'
