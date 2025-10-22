@@ -446,7 +446,7 @@ class Trainer:
         self.scheduler.load_state_dict(chkpt['scheduler_state'])
         self.scaler.load_state_dict(chkpt['scaler_state'])
         self.faiss.load_faiss_index(chkpt['faiss_index_path'])
-        return chkpt.epoch + 1
+        return chkpt["epoch"] + 1
 
     def save_checkpoint(self,epoch):
         ckpt = {
