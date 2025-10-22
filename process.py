@@ -926,11 +926,11 @@ class Evaluater:
                 batch_x = (query_tokens, candidate_tokens)
 
                 # Forward pass
-                batch_pred = self.model(batch_x)  # [batch_size, hidden_size]
+                query_tokens, candidate_tokens = batch_x
+                batch_pred = self.model(query_tokens, candidate_tokens)  # [batch_size, hidden_size]
                 loss = self.model.get_loss(batch_pred, batch_y)
 
                 acc_k, mrr = compute_metrics(batch_pred.detach().cpu(), batch_y.cpu(), k=self.topk)
-
 
                 total_loss += loss.item() * batch_size
                 total_mrr += mrr
@@ -996,7 +996,7 @@ if __name__ == "__main__":
 # python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16
 
 # eval:
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16 --skip_train --encoder_to_eval='./output/encoder_1'  --eval_faiss_path='./output/faiss_index.faiss'
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16 --skip_train --encoder_to_eval='./output/encoder_1'  --eval_faiss_path='./output/encoder_1/faiss_index.faiss'
 
 
 
