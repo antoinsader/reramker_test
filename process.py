@@ -869,6 +869,82 @@ class MyDataset(Dataset):
 
 
 
+class Evaluater:
+    def __init__(self, encoder_dir, faiss_path,    cfg:GlobalConfig):
+        self.cfg = cfg
+        
+        self.encoder_dir = encoder_dir
+        cfg.model.model_name = self.encoder_dir
+        self.faiss_path = faiss_path
+
+        cfg.paths.faiss_path = self.faiss_path
+
+        self.tokens_paths = TokensPaths("dict", "test")
+        self.use_cuda = torch.cuda.is_available()
+        self.device = "cuda" if self.use_cuda else "cpu"
+        self.dataset = MyDataset(self.tokens_paths, cfg )
+        self.encoder = MyEncoder(self.use_cuda, cfg.model)
+        self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device)
+        self.model = MyModel(self.use_cuda, self.encoder, cfg.train)
+        self.faiss.load_faiss_index(self.faiss_path)
+
+        self.topk = cfg.train.topk
+
+
+
+    def eval(self):
+        self.model.eval()
+        self.faiss.build_faiss(self.cfg.faiss.build_batch_size)
+        cands_idxs = self.faiss.search_faiss(self.cfg.faiss.search_batch_size) # (queries_N, topk)
+        cands_idxs = cands_idxs.astype(np.int64)
+        self.dataset.set_candidates(cands_idxs)
+        my_loader = torch.utils.data.DataLoader(
+            self.dataset,
+            batch_size=self.cfg.train.batch_size,
+            shuffle=True,
+            pin_memory=self.use_cuda,
+            num_workers=self.cfg.train.num_workers,
+            persistent_workers=False
+        )
+        
+        total_loss = 0.0
+        total_mrr = 0.0
+        total_acc = 0.0
+        total_samples = 0
+        n_eval = 0
+
+        with torch.inference_mode(), torch.amp.autocast("cuda", enabled=self.use_cuda):
+            for batch_x, batch_y in tqdm(my_loader, desc="Evaluating"):
+                batch_y = batch_y.to(self.device)
+                batch_size = batch_y.size(0)
+
+
+                query_tokens, candidate_tokens = batch_x
+
+                query_tokens = {k: v.to(self.device) for k, v in query_tokens.items()}
+                candidate_tokens = {k: v.to(self.device) for k, v in candidate_tokens.items()}
+                batch_x = (query_tokens, candidate_tokens)
+
+                # Forward pass
+                batch_pred = self.model(batch_x)  # [batch_size, hidden_size]
+                loss = self.model.get_loss(batch_pred, batch_y)
+
+                acc_k, mrr = compute_metrics(batch_pred.detach().cpu(), batch_y.cpu(), k=self.topk)
+
+
+                total_loss += loss.item() * batch_size
+                total_mrr += mrr
+                total_acc += acc_k
+                total_samples += batch_size
+                n_eval += 1
+        avg_loss = total_loss / total_samples
+        avg_mrr = total_mrr / n_eval
+        avg_acc = total_acc / n_eval
+
+        LOGGER.info(f"[Eval] Loss={avg_loss:.5f}, MRR={avg_mrr:.5f}, ACC@{self.topk}={avg_acc:.5f}")
+        return avg_loss, avg_mrr, avg_acc
+
+
 
 
 LOGGER = logging.getLogger()
@@ -891,79 +967,12 @@ def train(cfg: GlobalConfig):
     gc.collect()
     return cfg.paths.result_encoder_dir
 
-def eval(use_cuda, device, lg, result_encoder_dir, args):
-    use_cuda = torch.cuda.is_available()
-    print(f"use cuda: {use_cuda}" )
-    device = torch.device("cuda" if use_cuda else 'cpu')
-    
-    model = AutoModel.from_pretrained(result_encoder_dir, use_safetensors=True)
-    encoder = MyEncoder(model, use_cuda)
-    tokens_paths = TokensPaths("dict", "test")
-    my_ds = MyDataset(tokens_paths, args.topk, loss_type=args.loss_type)
-    my_faiss = MyFaiss(
-        tokens_paths=tokens_paths,
-        topk= args.topk,
-        encoder=encoder,
-        faiss_index_name=args.faiss_index_name,
-        faiss_cluster_samples_num = args.faiss_cluster_samples_num,
-        trained_faiss_index_path=config.trained_faiss_index_path,
-        use_cuda = use_cuda,
-        device=device,
-         add_index_use_fp16 = args.add_index_use_fp16, fp16_embs_saved=args.fp16_embs_saved, 
-         fp16_faiss_search=args.fp16_faiss_search,
-    )
+def eval(cfg:GlobalConfig):
+    eval_dir = cfg.eval_encoder_dir
+    faiss_dir = cfg.eval_faiss_dir
+    e = Evaluater(eval_dir, faiss_dir, cfg)
+    e.eval()
 
-    my_model = MyModel(encoder, args.learning_rate, args.weight_decay, use_cuda, config.loss_score_temperature, fp_16_model_forward=args.fp_16_model_forward)
-    my_model.eval()
-    my_faiss.build_faiss(args.build_faiss_batch_size)
-    cands_idxs = my_faiss.search_faiss(args.search_faiss_batch_size)
-    my_ds.set_candidates(cands_idxs)
-
-
-    eval_loader = torch.utils.data.DataLoader(
-            my_ds, 
-            batch_size=args.train_batch_size, 
-            shuffle=True, 
-            pin_memory=use_cuda, 
-            num_workers=args.num_workers,
-            persistent_workers=True)
-    total_loss = 0.0
-    total_mrr = 0.0
-    total_acc = 0.0
-    total_samples = 0
-    n_eval = 0
-    with torch.inference_mode(), torch.amp.autocast("cuda", enabled=use_cuda):
-        for batch_x, batch_y in tqdm(eval_loader, desc="Evaluating"):
-
-            batch_y = batch_y.to(device)
-            batch_size = batch_y.size(0)
-
-
-            query_tokens, candidate_tokens = batch_x
-
-            query_tokens = {k: v.to(device) for k, v in query_tokens.items()}
-            candidate_tokens = {k: v.to(device) for k, v in candidate_tokens.items()}
-            batch_x = (query_tokens, candidate_tokens)
-
-            # Forward pass
-            batch_pred = my_model(batch_x)  # [batch_size, hidden_size]
-            loss = my_model.get_loss(batch_pred, batch_y)
-
-            acc_k, mrr = compute_metrics(batch_pred.detach().cpu(), batch_y.cpu(), k=args.topk)
-
-
-            total_loss += loss.item() * batch_size
-            total_mrr += mrr
-            total_acc += acc_k
-            total_samples += batch_size
-            n_eval += 1
-
-    avg_loss = total_loss / total_samples
-    avg_mrr = total_mrr / n_eval
-    avg_acc = total_acc / n_eval
-
-    LOGGER.info(f"[Eval] Loss={avg_loss:.5f}, MRR={avg_mrr:.5f}, ACC@{args.topk}={avg_acc:.5f}")
-    return avg_loss, avg_mrr, avg_acc
 
 if __name__ == "__main__":
     cfg :GlobalConfig = parse_args()
@@ -975,10 +984,7 @@ if __name__ == "__main__":
 
     if not cfg.skip_eval:
         cfg.logger.tag = "eval"
-        print(f"Eval is not available now")
-        # result_encoder_dir = result_encoder_dir if result_encoder_dir is not None else args.encoder_to_eval
-        # assert result_encoder_dir is not None, f"encoder_to_eval should be specified" 
-        # eval(use_cuda, device, lg, result_encoder_dir, args)
+        eval(cfg)
 
 
 
