@@ -358,7 +358,7 @@ class Trainer:
         self.device = "cuda"    if self.use_cuda else "cpu"
         self.scaler = torch.amp.GradScaler(enabled=cfg.train.use_amp)
         self.encoder = MyEncoder(self.use_cuda, cfg.model)
-        self.model = MyModel(self.use_cuda, self.encoder, cfg.train)
+        self.model = MyModel(self.use_cuda, self.encoder, self.cfg.train)
         self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device)
         self.dataset = MyDataset(self.tokens_paths, cfg)
 
@@ -412,7 +412,7 @@ class Trainer:
         gc.collect()
 
         if epoch <= self.cfg.train.freeze_lower_layer_epoch_max:
-            self.encoder.freeze_lower_layers()
+            self.encoder.freeze_lower_layers(max(0, 7 - epoch ))
         else:
             self.encoder.unfreeze_all() 
         
@@ -494,6 +494,7 @@ class Trainer:
         avg_loss, avg_mrr, avg_acc, last_faiss_recall = 0.0, 0.0, 0.0, 0.0
         assert int(start_epoch) > 0 and int(start_epoch) < self.cfg.train.num_epochs 
         for epoch in range(start_epoch, self.cfg.train.num_epochs + 1):
+            self.cfg.train.loss_temperature = max(0.05, 0.15 * (0.88 ** (epoch - 1)))
             avg_loss, avg_mrr, avg_acc, last_faiss_recall = self.train_one_epoch(epoch)
             if self.cfg.train.save_checkpoints:
                 self.save_checkpoint(epoch)
@@ -1006,11 +1007,13 @@ LOGGER = logging.getLogger()
 
 
 def train(cfg: GlobalConfig):
-    LOGGER.info("ARGS: ")
-    LOGGER.info(cfg)
+
     
     chkpointing = CheckPointing(cfg)
     logger = MyLogger(LOGGER, chkpointing.log_path, cfg)
+
+    LOGGER.info("Configurations used: ")
+    LOGGER.info(cfg.to_dict())
 
     trainer = Trainer(logger, chkpointing, cfg)
     trainer.train()

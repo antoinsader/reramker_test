@@ -130,7 +130,8 @@ class TrainingConfig:
     hard_negatives_num:int= 7
     inject_hard_positives:bool= True
     hard_positives_num:int= 2
-    
+
+    freeze_lower_layer_epoch_max:int=2
 
 @dataclass
 class FaissConfig:
@@ -154,6 +155,14 @@ class GlobalConfig:
     eval_encoder_dir:str = ""
     eval_faiss_dir:str = ""
 
+    def to_dict(self):
+        return {
+            "model": vars(self.model),
+            "train": vars(self.train),
+            "faiss": vars(self.faiss),
+            "logger": vars(self.logger),
+            "paths": vars(self.paths)
+        }
 class CheckPointModel:
     def __init__(self, chkpt):
         self.model_state= chkpt['model_state']
