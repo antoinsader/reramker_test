@@ -70,7 +70,6 @@ def get_labels(query_candidates_cuis, query_cui, loss_type):
         return torch.tensor(labels, dtype=torch.float)
 
 
-
 def compute_metrics(scores, targets, k=5):
     """
     Compute top-k accuracy and MRR for retrieval scores.
@@ -127,3 +126,79 @@ def compute_metrics(scores, targets, k=5):
             mrr = rr_sum / max(valid, 1)
 
     return acc_at_k, mrr
+
+
+def compute_metrics_eval(scores, targets, multiple_ks=None, k=5):
+    """
+    Compute top-k accuracy and MRR for retrieval scores.
+    Works for both info_nce_loss (int targets) and marginal_nll (float vector targets).
+
+    Args:
+        scores (Tensor): shape [batch_size, topk]
+        targets (Tensor): either long (for info_nce) or float (for marginal_nll)
+        multiple_ks (list[int], optional): e.g., [1, 5, 10]. If provided, returns multiple accuracies.
+        k (int): default top-k if multiple_ks not provided
+
+    Returns:
+        dict: {'acc@1': ..., 'acc@5': ..., 'mrr': ...}
+    """
+    with torch.no_grad():
+        batch_size = scores.size(0)
+        topk = scores.size(1)
+        ks = multiple_ks if multiple_ks is not None else [k]
+
+        results = {}
+        total_rr_sum, total_valid = 0.0, 0
+
+        # Handle info_nce style targets (single positive index)
+        if targets.dtype == torch.long:
+            topk_preds = scores.argsort(dim=-1, descending=True)  # [B, topk]
+            acc_counts = {kk: 0 for kk in ks}
+
+            for i in range(batch_size):
+                t = targets[i].item()
+                if t == -100 or t < 0 or t >= topk:
+                    continue
+                total_valid += 1
+                preds = topk_preds[i].tolist()
+
+                # Reciprocal rank
+                rank = preds.index(t) + 1 if t in preds else topk + 1
+                total_rr_sum += 1.0 / rank
+
+                for kk in ks:
+                    if t in preds[:kk]:
+                        acc_counts[kk] += 1
+
+            for kk in ks:
+                results[f"acc@{kk}"] = acc_counts[kk] / max(total_valid, 1)
+            results["mrr"] = total_rr_sum / max(total_valid, 1)
+
+        # Handle marginal_nll style targets (float vector of 0/1)
+        else:
+            positives = (targets > 0.5)
+            topk_preds = scores.argsort(dim=-1, descending=True)
+            acc_counts = {kk: 0 for kk in ks}
+
+            for i in range(batch_size):
+                pos_idxs = positives[i].nonzero(as_tuple=True)[0].tolist()
+                if len(pos_idxs) == 0:
+                    continue
+                total_valid += 1
+                preds = topk_preds[i].tolist()
+
+                # Reciprocal rank of first correct
+                for r, idx in enumerate(preds, start=1):
+                    if idx in pos_idxs:
+                        total_rr_sum += 1.0 / r
+                        break
+
+                for kk in ks:
+                    if any(p in pos_idxs for p in preds[:kk]):
+                        acc_counts[kk] += 1
+
+            for kk in ks:
+                results[f"acc@{kk}"] = acc_counts[kk] / max(total_valid, 1)
+            results["mrr"] = total_rr_sum / max(total_valid, 1)
+
+    return results

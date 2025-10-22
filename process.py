@@ -22,7 +22,7 @@ from collections import defaultdict
 
 from transformers import AutoModel
 from config import CheckPointModel, FaissConfig, GlobalConfig, LoggerConfig, ModelConfig, TrainingConfig, parse_args, paths
-from utils import compute_metrics, get_labels, info_nce_loss, load_mmap_shape, marginal_nll, save_pkl
+from utils import compute_metrics, compute_metrics_eval, get_labels, info_nce_loss, load_mmap_shape, marginal_nll, save_pkl
 
 import config
 
@@ -915,13 +915,13 @@ class Evaluater:
         n_eval = 0
 
         with torch.inference_mode(), torch.amp.autocast("cuda", enabled=self.use_cuda):
+            all_metrics = []
             for batch_x, batch_y in tqdm(my_loader, desc="Evaluating"):
                 batch_y = batch_y.to(self.device)
                 batch_size = batch_y.size(0)
 
 
                 query_tokens, candidate_tokens = batch_x
-
                 query_tokens = {k: v.to(self.device) for k, v in query_tokens.items()}
                 candidate_tokens = {k: v.to(self.device) for k, v in candidate_tokens.items()}
                 batch_x = (query_tokens, candidate_tokens)
@@ -931,20 +931,30 @@ class Evaluater:
                 batch_pred = self.model(query_tokens, candidate_tokens)  # [batch_size, hidden_size]
                 loss = self.model.get_loss(batch_pred, batch_y)
 
-                acc_k, mrr = compute_metrics(batch_pred.detach().cpu(), batch_y.cpu(), k=self.topk)
-
-                total_loss += loss.item() * batch_size
-                total_mrr += mrr
-                total_acc += acc_k
+                res = compute_metrics(batch_pred.detach().cpu(), batch_y.cpu(), multiple_ks=[1, 2,4, 5, 7, 10, 12, 15, 17, 20])
+                res["loss"] = loss.item()
+                all_metrics.append(res)
                 total_samples += batch_size
                 n_eval += 1
-        avg_loss = total_loss / total_samples
-        avg_mrr = total_mrr / n_eval
-        avg_acc = total_acc / n_eval
-        print(f"Eval finished with loss={avg_loss:.5f}, MRR={avg_mrr:.5f}, acc@{self.topk} ={avg_acc:.5f}")
-        LOGGER.info(f"[Eval] Loss={avg_loss:.5f}, MRR={avg_mrr:.5f}, ACC@{self.topk}={avg_acc:.5f}")
-        return avg_loss, avg_mrr, avg_acc
+        avg_metrics = {k: np.mean([m[k] for m in all_metrics]) for k in all_metrics[0].keys()}
+        print("\n" + "=" * 80)
+        print(f"{'Evaluation Results':^80}")
+        print("=" * 80)
+        print(f"Average Loss: {avg_metrics['loss']:.4f}")
+        print(f"Mean Reciprocal Rank (MRR): {avg_metrics['mrr']:.4f}")
+        print("-" * 80)
+        for k in sorted([kk for kk in avg_metrics.keys() if kk.startswith('acc@')],
+                        key=lambda x: int(x.split('@')[1])):
+            print(f"{k:>10}: {avg_metrics[k]:.4f}")
+        print("=" * 80 + "\n")
 
+        LOGGER.info(
+            f"[Eval] Loss={avg_metrics['loss']:.5f}, "
+            f"MRR={avg_metrics['mrr']:.5f}, "
+            + ", ".join([f"{k}={avg_metrics[k]:.5f}" for k in sorted(avg_metrics.keys()) if k.startswith('acc@')])
+        )
+
+        return avg_metrics
 
 
 
