@@ -1,8 +1,7 @@
 import argparse
-from dataclasses import field
+from dataclasses import dataclass, field
 import os
 
-from attr import dataclass
 
 
 tokens_dir = "./data/tokens"
@@ -57,23 +56,40 @@ class PathsConfig:
     output_dir: str = "./output"
     chkpnts_dir: str = "./checkpoints"
     embeds_dir: str = "./data/embeds"
+    raw_dir: str = "./data/raw"
+    draft_dir: str = "./data/draft"
 
+    global_log_path: str = f"./logs/logger_all.json"
 
+    result_encoder_dir = None
+    checkpoint_dir = None
+    checkpoint_path = None
+    faiss_path = None
 
     def __post_init__(self):
+        assert os.path.isdir(self.raw_dir)
         os.makedirs(self.tokens_dir, exist_ok=True)
         os.makedirs(self.logs_dir, exist_ok=True)
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs(self.embeds_dir, exist_ok=True)
         os.makedirs(self.chkpnts_dir, exist_ok=True)
+        os.makedirs(self.draft_dir, exist_ok=True)
+
+    def set_result_encoder_dir(self, dir):
+        self.result_encoder_dir = dir
+        self.checkpoint_dir = os.path.join(dir, "checkpoints")
+        self.checkpoint_path = os.path.join(self.checkpoint_dir, "last.pt")
+        self.faiss_path  = self.result_encoder_dir + "/faiss_index.faiss"
+        os.makedirs(self.result_encoder_dir, exist_ok=True)
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+
 
 @dataclass
 class TokensConfig:
     max_length:int = 25
-    raw_dictionary_path:str = f"{PathsConfig.raw_dir}/train_dictionary.txt"
-    raw_queries_dir:str = os.path.join(PathsConfig.raw_dir ,  "traindev")
+    raw_dictionary_path: str = os.path.join(PathsConfig().raw_dir, "train_dictionary.txt")
+    raw_queries_dir: str = os.path.join(PathsConfig().raw_dir, "traindev")
     raw_test_dir:str = None
-
     test_split_from_train: bool = True
     test_split_percentage: float = 0.8
 
@@ -81,10 +97,9 @@ class TokensConfig:
 
 @dataclass
 class LoggerConfig:
-    global_log_path:str = f"{PathsConfig.logs_dir}/logger_all.json"
-    logs_dir:str= f"{PathsConfig.logs_dir}"
     tag:str="train"
     train_log_name: str = ""
+
 
 
 @dataclass
@@ -102,7 +117,7 @@ class TrainingConfig:
     learning_rate: float = 1e-4
     weight_decay: float = 0.01
     num_workers: int = 8
-    topk: int = 15
+    topk: int = 20
     loss_type: str = "marginal_nll" # info_nce_loss
     optimizer_name: str = "AdamW" # Adam
     use_amp: bool = True
@@ -111,9 +126,15 @@ class TrainingConfig:
     save_checkpoints:bool = True
     load_last_checkpoint:bool = True
 
+    inject_hard_negatives:bool= True
+    hard_negatives_num:int= 5
+    inject_hard_positives:bool= True
+    hard_positives_num:int= 3
+    
+
 @dataclass
 class FaissConfig:
-    cluster_samples: int = 500_000
+    cluster_samples: int = 1_000_000
     build_batch_size: int = 4096
     search_batch_size: int = 4096
     index_name: str = "IndexHNSWFlat"
@@ -146,15 +167,16 @@ class LogDataModel:
         self.training_log_name= row['training_log_name']
 
 
-def parse_args(cfg:GlobalConfig):
+def parse_args():
     """
     Parse input arguments
     """
+    cfg = GlobalConfig()
     parser = argparse.ArgumentParser(description='ranker train')
 
     # Required
     parser.add_argument('--training_log_name', required=True,
-                        help='Training log name')
+                        help='Unique name for the training session')
 
     parser.add_argument('--faiss_index_name', type=str, required=True,
                         help='Either IndexHNSWFlat or IndexFlatIP')
@@ -222,7 +244,7 @@ def parse_args(cfg:GlobalConfig):
     if args.faiss_clustering_samples_size:
         cfg.faiss.cluster_samples = args.faiss_clustering_samples_size
     if args.encoder_to_eval:
-        assert os.p
+        assert os.path.isdir(args.encoder_to_eval)
         cfg.eval_encoder_dir = args.encoder_to_eval
     if args.save_debug_pkls:
         cfg.train.save_batch_output_pkl = args.save_debug_pkls

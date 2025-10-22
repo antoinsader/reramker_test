@@ -5,7 +5,6 @@
 
 
 import datetime
-from sympy import true
 import gc, json, psutil, os, torch, time, faiss, logging
 import math
 import numpy as np
@@ -33,85 +32,26 @@ import config
 # ====================
 
 class MyLogger:
-    def __init__(self, logger, cfg:LoggerConfig):
-        self.use_cuda = torch.cuda.is_available
-        self.global_log_path = cfg.global_log_path
-        self.logs_dir=  cfg.logs_dir
-        self.tag = cfg.tag
-
+    def __init__(self, logger, log_path, cfg:GlobalConfig):
+        self.log_path = log_path
+        self.logger = logger
+        self.use_cuda = torch.cuda.is_available()
+        self.cfg = cfg
         self.process = psutil.Process(os.getpid())
         self.device = "cuda" if self.use_cuda else "cpu"
-        self.logger = logger
-
-
 
         self.cpu_memory_used = 0.0
         self.messages = []
         self.one_time_events_set = set()
-
-        #log_path is where the log of the current training
-        # log_global_data is the array holding the all log and will be used to write the last log
-        # current_global_log_number is the number used in the current log
-        self.log_path,  self.log_global_data, self.current_global_log_number = self._init_logging()
-
-
-    def _init_logging(self):
-
-        log_global_data = []
-        if not os.path.isfile(self.global_log_path):
-            with open(self.global_log_path, "w") as f:
-                json.dump(log_global_data,f)
-        os.makedirs(self.logs_dir, exist_ok=True)
-
-
-        with open(self.global_log_path, "r") as f:
-            log_global_data = json.load(f)
-
-
-        unfinished = [x for x in log_global_data if not x.get("finished", False)]
-        if unfinished:
-            current_entry = unfinished[-1]
-            current_global_log_number = current_entry['id']
-            log_path = current_entry['log_details_file']
-            self.logger.info(f"Resuming unfinished log {current_global_log_number} in {log_path}")
-        else:
-            current_global_log_number = log_global_data[-1]["id"] + 1 if len(log_global_data) > 0 else 1
-            datestr = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            log_path = self.logs_dir + f"/log_{current_global_log_number}_{datestr}.log"
-            new_entry = {
-                "id": current_global_log_number,
-                "start_time": datestr,
-                "finished": False,
-                "log_details_file": log_path
-            }
-            log_global_data.append(new_entry)
-            with open(self.global_log_path, "w") as f:
-                json.dump(log_global_data, f, indent=2)
-
 
         fmt = logging.Formatter('%(message)s')
         self.logger.setLevel(logging.INFO)
         console = logging.StreamHandler()
         console.setFormatter(fmt)
         self.logger.addHandler(console)
-        file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+        file_handler = logging.FileHandler(self.log_path, mode="a", encoding="utf-8")
         file_handler.setFormatter(fmt)
         self.logger.addHandler(file_handler)
-        return log_path,  log_global_data,current_global_log_number
-
-
-    def mark_finished(self):
-        with open(self.global_log_path, "r") as f:
-            logs = json.load(f)
-        for entry in logs:
-            if entry["id"] == self.current_global_log_number:
-                entry["finished"] = true
-                entry["end_time"] = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                break
-
-        with open(self.global_log_path, "w") as f:
-            json.dump(logs, f, indent=2)
-        self.logger.info(f"Log marked finished")
 
 
     def current_cpu_mem_usage(self):
@@ -151,10 +91,11 @@ class MyLogger:
         if first_iteration_only and event_tag in self.one_time_events_set:
             return True
 
+        big_tag = self.cfg.logger.tag
 
         self.one_time_events_set.add(event_tag)
 
-        msg = f"[{self.tag}-{event_tag}] "
+        msg = f"[{big_tag}-{event_tag}] "
         if epoch:
             msg += f"-epoch_{epoch}"
         if message: 
@@ -187,16 +128,16 @@ class MyEncoder():
         self.cfg = cfg
         self.use_cuda = use_cuda
 
-        model = AutoModel.from_pretrained(cfg.model_name, use_safetensors=True)
+        encoder = AutoModel.from_pretrained(cfg.model_name, use_safetensors=True)
         self.device = "cuda" if use_cuda else "cpu"
-        self.model = model.to(self.device)
-        cfg.hidden_size = self.model.config.hidden_size
+        self.encoder = encoder.to(self.device)
+        cfg.hidden_size = self.encoder.config.hidden_size
 
     def get_emb(self, input_ids_tensor, attention_mask_tensor, use_amp=False, use_no_grad=False):
         context = torch.inference_mode() if use_no_grad else torch.enable_grad()
         with context, torch.amp.autocast(device_type="cuda", enabled=(self.use_cuda and use_amp)):
             # Hidden state, (batch, seq_len, hidden)
-            emb = self.model(input_ids=input_ids_tensor, attention_mask=attention_mask_tensor)[0]
+            emb = self.encoder(input_ids=input_ids_tensor, attention_mask=attention_mask_tensor)[0]
 
         # mean pooling
         mask = attention_mask_tensor.unsqueeze(-1).float()
@@ -226,6 +167,96 @@ class MyEncoder():
 
     def get_state_dict(self):
         return self.encoder.state_dict()
+# =======================
+#       CHECKPOINTING
+#========================
+class CheckPointing:
+    def __init__(self,  cfg:GlobalConfig):
+        self.global_log_path = cfg.paths.global_log_path
+        self.logs_dir =  cfg.paths.logs_dir
+        self.log_path = None
+        self.current_global_log_number = None
+        self.current_entry, self.all_entries = self.get_last_global_obj()
+        self.cfg = cfg
+
+
+        assert self.current_global_log_number is not None
+        assert self.log_path is not None
+        assert self.current_entry["id"] == self.all_entries[-1]["id"]
+
+        cfg.paths.set_result_encoder_dir(cfg.paths.output_dir + f"/encoder_{self.current_global_log_number}/")
+        self.checkpoint_path = cfg.paths.checkpoint_path
+
+        assert self.checkpoint_path is not None
+
+
+    def get_last_global_obj(self):
+        log_global_data = []
+        if not os.path.isfile(self.global_log_path):
+            with open(self.global_log_path, "w") as f:
+                json.dump(log_global_data,f)
+        os.makedirs(self.logs_dir, exist_ok=True)
+
+
+        with open(self.global_log_path, "r") as f:
+            log_global_data = json.load(f)
+
+        log_obj = {}
+        unfinished = [x for x in log_global_data if not x.get("finished", False)]
+        if unfinished:
+            current_entry = unfinished[-1]
+            self.current_global_log_number = current_entry['id']
+            self.log_path = current_entry['log_details_file']
+            log_obj = current_entry
+        else:
+            self.current_global_log_number = log_global_data[-1]["id"] + 1 if len(log_global_data) > 0 else 1
+            datestr = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            self.log_path = self.logs_dir + f"/log_{self.current_global_log_number}_{datestr}.log"
+
+            log_obj = {
+                "id": self.current_global_log_number,
+                "start_time": datestr,
+                "finished": False,
+                "log_details_file": self.log_path
+            }
+            log_global_data.append(log_obj)
+            with open(self.global_log_path, "w") as f:
+                json.dump(log_global_data, f, indent=2)
+        return log_obj, log_global_data
+
+
+
+    def log_finished(self, queries_len, dict_len, training_time_str, last_acc_5, last_mrr, last_faiss_recall, last_loss ):
+        self.current_entry["finished"] = True
+        self.current_entry["end_date"] = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        self.current_entry["training_log_name"] = self.cfg.logger.train_log_name
+        self.current_entry["queries_size"] = queries_len
+        self.current_entry["dictionary_size"] = dict_len
+        self.current_entry["trained_period"] = training_time_str
+        self.current_entry["log_details_file"] = self.log_path
+        self.current_entry["epochs"] = self.cfg.train.num_epochs
+        self.current_entry["last_faiss_recall@15"] = last_faiss_recall
+        self.current_entry["last_avg_acc_5"] = last_acc_5
+        self.current_entry["last_avg_mrr"] = last_mrr
+        self.current_entry["last_avg_loss"] = last_loss
+        self.current_entry["result_encoder_dir"] = self.cfg.paths.result_encoder_dir
+        
+
+
+
+        self.all_entries[-1] = self.current_entry
+        with open(self.global_log_path, "w") as f:
+            json.dump(self.all_entries, f, indent=2)
+        return True
+
+    def save_checkpoint(self, chkpt):
+        torch.save(chkpt, self.checkpoint_path)
+        return True
+
+    def restore_checkpoint(self):
+        chkpt = torch.load(self.checkpoint_path)
+        return chkpt
 
 # =======================
 #       MY MODEL
@@ -244,7 +275,7 @@ class MyModel(nn.Module):
         assert cfg.optimizer_name == 'AdamW', f'Currently only AdamW available'
 
         self.optimizer = optim.AdamW(
-            self.encoder.model.parameters(),
+            self.encoder.encoder.parameters(),
             lr=cfg.learning_rate,
             weight_decay=cfg.weight_decay,
             fused=self.use_cuda
@@ -296,26 +327,27 @@ class MyModel(nn.Module):
 # MY TRAINER
 # ======================
 class Trainer:
-    def __init__(self, result_encoder_dir,  metric_logger: MyLogger, cfg:GlobalConfig):
+    def __init__(self,  metric_logger: MyLogger, checkpointing: CheckPointing, cfg:GlobalConfig):
         self.cfg = cfg
-        self.result_encoder_dir = result_encoder_dir
-        os.makedirs(self.result_encoder_dir, exist_ok=True)
-        self.faiss_path  = result_encoder_dir + "/faiss_index.faiss"
-
+        
+        self.result_encoder_dir = cfg.paths.result_encoder_dir
+        self.faiss_path  = cfg.paths.faiss_path
 
         self.tokens_paths = TokensPaths("dict", "queries")
 
         self.logger: MyLogger = metric_logger
-        self.use_cuda = torch.cuda.is_available
-        self.device = "cuda"    if torch.cuda.is_available else "cpu"
+        self.checkpointing : CheckPointing = checkpointing
+
+        self.use_cuda = torch.cuda.is_available()
+        self.device = "cuda"    if self.use_cuda else "cpu"
         self.scaler = torch.amp.GradScaler(enabled=cfg.train.use_amp)
-        self.encoder = MyEncoder(self.use_cuda, ModelConfig)
-        self.model = MyModel(self.use_cuda, self.encoder, TrainingConfig)
+        self.encoder = MyEncoder(self.use_cuda, cfg.model)
+        self.model = MyModel(self.use_cuda, self.encoder, cfg.train)
         self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device)
         self.dataset = MyDataset(self.tokens_paths, cfg)
 
         num_training_steps = len(self.dataset) // self.cfg.train.batch_size * self.cfg.train.num_epochs
-        num_warmup_steps = int(0.1 * num_training_steps)
+        num_warmup_steps = int(0.05 * num_training_steps)
 
         self.scheduler = get_linear_schedule_with_warmup(
             self.model.optimizer,
@@ -324,11 +356,8 @@ class Trainer:
         )
 
         self.topk = cfg.train.topk
-        self.chkpnt_dir = os.path.join(result_encoder_dir, "checkpoints")
-        if cfg.train.save_checkpoints:
-            os.makedirs(self.chkpnt_dir, exist_ok=True)
-            self.chkpoint_path = os.path.join(self.chkpnt_dir, "last.pt")
-
+        self.chkpoint_path = cfg.paths.checkpoint_path
+        
 
     def train_one_batch(self, dl_item):
         self.model.optimizer.zero_grad(set_to_none=True)
@@ -339,9 +368,15 @@ class Trainer:
             loss = self.model.get_loss(batch_scores, batch_y)
 
         self.scaler.scale(loss).backward()
+        self.scaler.unscale_(self.model.optimizer)
+        torch.nn.utils.clip_grad_norm_(self.model.encoder.encoder.parameters(), max_norm=1.0)
+        
+        
         self.scaler.step(self.model.optimizer)
         self.scaler.update()
         self.scheduler.step()
+
+
 
         acc, mrr = compute_metrics(batch_scores.detach().cpu(), batch_y.cpu(), k=5)
 
@@ -349,9 +384,9 @@ class Trainer:
 
 
         if self.cfg.train.save_batch_output_pkl:
-            save_pkl(batch_x, f"self.cfg.paths.draft_dir/last_batch_x.pkl")
-            save_pkl(batch_y, f"self.cfg.paths.draft_dir/last_batch_y.pkl")
-            save_pkl(batch_scores, f"self.cfg.paths.draft_dir/last_batch_scores.pkl")
+            save_pkl(batch_x, f"{self.cfg.paths.draft_dir}/last_batch_x.pkl")
+            save_pkl(batch_y, f"{self.cfg.paths.draft_dir}/last_batch_y.pkl")
+            save_pkl(batch_scores, f"{self.cfg.paths.draft_dir}/last_batch_scores.pkl")
 
         del batch_x, batch_y, batch_scores
         return acc, mrr, loss.item()
@@ -379,7 +414,7 @@ class Trainer:
             shuffle=True,
             pin_memory=self.use_cuda,
             num_workers=self.cfg.train.num_workers,
-            persistent_workers=self.use_cuda
+            persistent_workers=False
         )
 
         t0 = time.time()
@@ -400,18 +435,17 @@ class Trainer:
         del my_loader
         torch.cuda.empty_cache()
         gc.collect()
-        return avg_loss
+        return avg_loss, avg_mrr, avg_acc, recall_faiss
 
 
-    def restore_chkpoint(self, chkpt_path):
-        _chkpt = torch.load(chkpt_path, map_location=self.device)
-        chkpt = CheckPointModel(_chkpt)
-        self.model.encoder.load_state(chkpt.model_state)
-        self.model.optimizer.load_state_dict(chkpt.optimizer_state)
-        self.scheduler.load_state_dict(chkpt.scheduler_state)
-        self.scaler.load_state_dict(chkpt.scaler_state)
-        self.faiss.load_faiss_index(chkpt.faiss_index_path)
-        return chkpt.epoch
+    def restore_chkpoint(self):
+        chkpt = self.checkpointing.restore_checkpoint()
+        self.model.encoder.load_state(chkpt['model_state'])
+        self.model.optimizer.load_state_dict(chkpt['optimizer_state'])
+        self.scheduler.load_state_dict(chkpt['scheduler_state'])
+        self.scaler.load_state_dict(chkpt['scaler_state'])
+        self.faiss.load_faiss_index(chkpt['faiss_index_path'])
+        return chkpt.epoch + 1
 
     def save_checkpoint(self,epoch):
         ckpt = {
@@ -422,8 +456,7 @@ class Trainer:
             "scaler_state": self.scaler.state_dict(),
             "faiss_index_path": self.faiss.save_index(),
         }
-        chkpt = CheckPointModel(ckpt)
-        torch.save(chkpt, self.chkpoint_path)
+        self.checkpointing.save_checkpoint(ckpt)
         return True
 
     def train(self):
@@ -432,28 +465,33 @@ class Trainer:
         if self.cfg.train.load_last_checkpoint:
             if os.path.exists(self.chkpoint_path):
                 self.logger.log_event("checkpoint resotred", f" restoring checkpoint from: {self.chkpoint_path}", log_memory=False)
-                ckpt = torch.load(self.chkpoint_path, map_location=self.device)
-                start_epoch = self.restore_chkpoint(ckpt)
+                start_epoch = self.restore_chkpoint()
 
+        avg_loss, avg_mrr, avg_acc, last_faiss_recall = 0.0, 0.0, 0.0, 0.0
         assert int(start_epoch) > 0 and int(start_epoch) < self.cfg.train.num_epochs 
         for epoch in range(start_epoch, self.cfg.train.num_epochs + 1):
-            self.train_one_epoch(epoch)
-            self.save_checkpoint(epoch)
+            avg_loss, avg_mrr, avg_acc, last_faiss_recall = self.train_one_epoch(epoch)
+            if self.cfg.train.save_checkpoints:
+                self.save_checkpoint(epoch)
+
 
         training_time = time.time() - t0
         training_time_str = f"{int(training_time/60/60)}h, {int(training_time/60 % 60)}mins, {int(training_time % 60)}secs"
-
-        self.logger.log_global_data[-1] = LogDatModel
-        with open(self.cfg.logger.global_log_path, "w") as f:
-            json.dump(self.logger.log_global_data, f)
-        self.logger.mark_finished
+        self.checkpointing.log_finished(
+            queries_len=len(self.dataset.query_cuis),
+            dict_len=len(self.dataset.dict_cuis),
+            training_time_str=training_time_str,
+            last_acc_5 = avg_acc,
+            last_mrr = avg_mrr,
+            last_faiss_recall= last_faiss_recall,
+            last_loss=avg_loss
+        )
 
         self.encoder.save_state(self.result_encoder_dir)
         self.save_checkpoint(epoch='last')
 
         self.logger.log_event("Train finished", t0=t0, log_memory=False)
-        self.logger.log_event("Main info: " , message=self.logger.log_global_data[-1], log_memory=False)
-        self.logger.log_event("Log saved in: ", message=lg.log_path, log_memory=False)
+        self.logger.log_event("Main info: " , message=self.checkpointing.current_entry, log_memory=False)
 
 
 
@@ -563,7 +601,7 @@ class MyFaiss():
             num_bytes = 32 # num bytes per vector in PQ
             quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
             quantizer.hnsw.efConstruction = 200
-            quantizer.hnsw.efSearch = 64
+            quantizer.hnsw.efSearch = 256
 
             index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
             index.useFloat16LookupTables = self.use_amp
@@ -590,7 +628,7 @@ class MyFaiss():
 
     def build_faiss(self, batch_size):
         N = self.tokens_paths.dict_shape[0]
-        hidden_size = self.encoder.encoder.config.hidden_size
+        hidden_size = self.hidden_size
 
         if self.faiss_index is None:
             self.init_index(hidden_size, N)
@@ -620,7 +658,7 @@ class MyFaiss():
             end = min(start + batch_size, N)
             inp  = torch.as_tensor(dictionary_inputs[start:end], device=self.device)
             att = torch.as_tensor(dictionary_att[start:end],device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=self.ise_amp, use_no_grad=True)
+            embs = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
             self.faiss_index.add(embs.contiguous())
             del inp, att, embs
         del dictionary_inputs, dictionary_att
@@ -692,6 +730,11 @@ class MyDataset(Dataset):
 
         self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
         self.dict_cuis  = np.load(self.tokens_paths.dict_cuis_path)
+        
+        self.inject_hard_negatives = cfg.train.inject_hard_negatives
+        self.hard_negatives_num = cfg.train.hard_negatives_num
+        self.inject_hard_positives = cfg.train.inject_hard_positives
+        self.hard_positives_num = cfg.train.hard_positives_num
 
         self.query_inputs = np.memmap(
                 self.tokens_paths.query_inp_path,
@@ -719,6 +762,9 @@ class MyDataset(Dataset):
                 dtype=np.int32,
                 shape=self.tokens_paths.dict_shape
             )
+
+        self.last_epoch_cands = None
+
         self.dictionary_cui_to_idx = defaultdict(list)
         for idx, cui in enumerate(self.dict_cuis):
             self.dictionary_cui_to_idx[cui].append(idx)
@@ -726,8 +772,56 @@ class MyDataset(Dataset):
     def __len__(self,):
         return len(self.query_inputs)
 
+
+    def change_candidates_pool(self):
+        """
+            all_candidates_idxs are current candidates (N queries, topk)
+            last_epoch_cands are candidates from last_epoch (N queries, topk)
+            return new_cands (N queries, topk)
+
+        """
+        assert self.all_candidates_idxs is not None, "Candidates are not set"
+
+        inj_hard_negatives = (self.last_epoch_cands is not None) and self.inject_hard_negatives
+
+        if self.last_epoch_cands:
+            return self.all_candidates_idxs
+
+        num_queries, topk = self.all_candidates_idxs.shape
+        new_cands = self.all_candidates_idxs.clone()
+
+        for q_idx in range(num_queries):
+            q_cui = self.query_cuis[q_idx]
+            cand_idxs = new_cands[q_idx].tolist()
+
+            if self.inject_hard_positives:
+                positive_indexes = self.dictionary_cui_to_idx.get(q_cui, [])
+                if len(positive_indexes) > 0:
+                    available_positives = list(set(positive_indexes) - set(cand_idxs))
+                    if available_positives:
+                        n_pos = min(self.hard_positives_num, len(available_positives))
+                        chosen_pos = np.random.choice(available_positives, size=n_pos, replace=False)
+                        new_cands[q_idx, -n_pos:] = torch.from_numpy(chosen_pos)
+
+            if inj_hard_negatives:
+                last_epoch_cands_idxs = self.last_epoch_cands[q_idx]
+                prev_cuis = self.dict_cuis[last_epoch_cands_idxs]
+                neg_mask = prev_cuis != q_cui
+                hards_negs = last_epoch_cands_idxs[neg_mask]
+                if len(hards_negs) > 0:
+                    n_neg = min(self.hard_negatives_num, len(hards_negs))
+                    chosen_negs = np.random.choice(hards_negs, size=n_neg, replace=False)
+                    new_cands[q_idx, :n_neg] = torch.from_numpy(chosen_negs)
+
+        return new_cands
+
     def set_candidates(self,cands):
         self.all_candidates_idxs = torch.as_tensor(cands, dtype=torch.long)
+        new_cands = self.change_candidates_pool()
+        self.last_epoch_cands = self.all_candidates_idxs.clone()
+        self.all_candidates_idxs = new_cands
+
+
 
 
     def __getitem__(self, query_idx):
@@ -782,27 +876,19 @@ LOGGER = logging.getLogger()
 
 
 
-def train(logger,cfg):
+def train(cfg: GlobalConfig):
     LOGGER.info("ARGS: ")
-    LOGGER.info(args)
+    LOGGER.info(cfg)
     
-    
-    result_encoder_dir = config.result_encoders_dir + f"/encoder_{lg.current_global_log_number}/" 
-    trainer = Trainer(result_encoder_dir, logger, cfg)
-    trainer.train()
-    # with open(config.global_log_path, "w") as f:
-    #     lg.log_global_data[-1]["training_log_name"] = args.training_log_name
-    #     lg.log_global_data[-1]["queries size"]  = len(my_ds.query_cuis)
-    #     lg.log_global_data[-1]["dictionary size"]  = len(my_ds.dict_cuis)
-    #     lg.log_global_data[-1]["finished time"]  = training_time_str
-    #     lg.log_global_data[-1]["log details file"]  = lg.log_path
-    #     lg.log_global_data[-1]["epochs"]  = args.num_epochs
-    #     lg.log_global_data[-1]["acc@5"]  = epoch_acc/n_eval
-    #     lg.log_global_data[-1]["mrr"]  = epoch_mrr/n_eval
-    #     lg.log_global_data[-1]["encoder dir"]  = result_encoder_dir
-    #     json.dump(lg.log_global_data,f)
+    chkpointing = CheckPointing(cfg)
+    logger = MyLogger(LOGGER, chkpointing.log_path, cfg)
 
-    return result_encoder_dir
+    trainer = Trainer(logger, chkpointing, cfg)
+    trainer.train()
+    
+    torch.cuda.empty_cache()
+    gc.collect()
+    return cfg.paths.result_encoder_dir
 
 def eval(use_cuda, device, lg, result_encoder_dir, args):
     use_cuda = torch.cuda.is_available()
@@ -880,12 +966,14 @@ def eval(use_cuda, device, lg, result_encoder_dir, args):
 
 if __name__ == "__main__":
     cfg :GlobalConfig = parse_args()
-    lg = MyLogger(LOGGER, cfg)
+    
 
     if not cfg.skip_train:
-        result_encoder_dir = train(lg, cfg)
+        cfg.logger.tag = "train"
+        result_encoder_dir = train(cfg)
 
     if not cfg.skip_eval:
+        cfg.logger.tag = "eval"
         print(f"Eval is not available now")
         # result_encoder_dir = result_encoder_dir if result_encoder_dir is not None else args.encoder_to_eval
         # assert result_encoder_dir is not None, f"encoder_to_eval should be specified" 
