@@ -1085,6 +1085,8 @@ if __name__ == "__main__":
     if not cfg.skip_train:
         cfg.logger.tag = "train"
         result_encoder_dir = train(cfg)
+        cfg.eval_encoder_dir = result_encoder_dir
+        cfg.eval_faiss_dir = cfg.paths.faiss_path
 
     if not cfg.skip_eval:
         cfg.logger.tag = "eval"

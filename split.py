@@ -80,18 +80,26 @@ def main(args):
     print(f"queries train now: {len(query_cuis)} records")
 
 
+
+
     n = query_inputs.shape[0]
     split_idx = int(n * args.train_percentage)
     print(f"queries train should be after: {split_idx} records")
 
 
-    train_inputs = query_inputs[:split_idx]
-    train_attention = query_attention[:split_idx]
-    train_cuis = query_cuis[:split_idx]
 
-    test_inputs = query_inputs[split_idx:]
-    test_attention = query_attention[split_idx:]
-    test_cuis = query_cuis[split_idx:]
+    rng = np.random.default_rng(seed=42)  # set seed for reproducibility
+    perm = rng.permutation(n)
+    train_idx = perm[:split_idx]
+    test_idx = perm[split_idx:]
+
+    train_inputs = query_inputs[train_idx]
+    train_attention = query_attention[train_idx]
+    train_cuis = query_cuis[train_idx]
+
+    test_inputs = query_inputs[test_idx]
+    test_attention = query_attention[test_idx]
+    test_cuis = query_cuis[test_idx]
 
 
     test_inputs_mmap = np.memmap(
