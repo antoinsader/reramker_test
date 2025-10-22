@@ -264,11 +264,11 @@ class CheckPointing:
 #========================
 
 class MyModel(nn.Module):
-    def __init__(self, use_cuda, encoder : MyEncoder,  cfg:TrainingConfig ):
+    def __init__(self, use_cuda, encoder : MyEncoder,  cfg:GlobalConfig ):
         super().__init__()
 
         self.use_cuda = use_cuda
-        self.cfg = cfg
+        self.cfg = cfg.train
         self.encoder = encoder
         self.criterion = info_nce_loss if cfg.loss_type == 'info_nce_loss' else marginal_nll
         self.device = "cuda" if use_cuda else "cpu"
@@ -795,24 +795,41 @@ class MyDataset(Dataset):
             q_cui = self.query_cuis[q_idx]
             cand_idxs = new_cands[q_idx].tolist()
 
+            candidates_idxs_to_be_replaced = np.array([])
             if self.inject_hard_positives:
+                #those are dictionary idxs having the same cui as the query
                 positive_indexes = self.dictionary_cui_to_idx.get(q_cui, [])
                 if len(positive_indexes) > 0:
+                    # positives indexes other than the candidates indexes
                     available_positives = list(set(positive_indexes) - set(cand_idxs))
                     if available_positives:
-                        n_pos = min(self.hard_positives_num, len(available_positives))
-                        chosen_pos = np.random.choice(available_positives, size=n_pos, replace=False)
-                        new_cands[q_idx, -n_pos:] = torch.from_numpy(chosen_pos)
+                        # how many positives we will inject, in case available are less than the one in config
+                        positive_n = min(self.hard_positives_num, len(available_positives))
+                        #  random positive candidates, to choose from available positives (index of dictionary_cui)
+                        positive_candidates = np.random.choice(available_positives, size=positive_n, replace=False)
+                        # random indexes in candidate list to be replaced
+                        candidates_idxs_to_be_replaced = np.random.choice(self.topk , size=positive_n, replace=False)
+                        new_cands[q_idx, candidates_idxs_to_be_replaced] = torch.from_numpy(positive_candidates)
 
             if inj_hard_negatives:
-                last_epoch_cands_idxs = self.last_epoch_cands[q_idx]
-                prev_cuis = self.dict_cuis[last_epoch_cands_idxs]
-                neg_mask = prev_cuis != q_cui
-                hards_negs = last_epoch_cands_idxs[neg_mask]
-                if len(hards_negs) > 0:
-                    n_neg = min(self.hard_negatives_num, len(hards_negs))
-                    chosen_negs = np.random.choice(hards_negs, size=n_neg, replace=False)
-                    new_cands[q_idx, :n_neg] = torch.from_numpy(chosen_negs)
+                # choose negatives from last epoch candidates because the faiss search thought they are similar (because their cosine difference is less) 
+                # so we call them hard, and they can be good to enforce encoder embeding them far from the places they were
+                prev_cands_idxs = self.last_epoch_cands[q_idx]
+                # getting cuis of the candidates to get the negatives
+                prev_dictionary_cuis = self.dict_cuis[prev_cands_idxs]
+                neg_mask = prev_dictionary_cuis != q_cui
+                # We will choose hard negatives from those indexes
+                hard_negative_indexes = prev_cands_idxs[neg_mask]
+
+                if len(hard_negative_indexes) > 0:
+                    negatives_n = min(self.hard_negatives_num, len(hard_negative_indexes))
+                    hard_negative_candidates = np.random.choice(hard_negative_indexes, size=negatives_n, replace=False)
+                    
+                    # candidates_to_replace_positive
+                    candidates_available_idxs = list(set(range(self.topk)) - set(candidates_idxs_to_be_replaced )  )
+                    candidates_idxs_to_be_replaced = np.random.choice(candidates_available_idxs, size=negatives_n, replace=False)
+                    
+                    new_cands[q_idx, candidates_idxs_to_be_replaced] = torch.from_numpy(hard_negative_candidates)
 
         return new_cands
 
@@ -896,6 +913,7 @@ class Evaluater:
 
     def eval(self):
         self.model.eval()
+        self.faiss.build_faiss(self.cfg.faiss.build_batch_size)
         cands_idxs = self.faiss.search_faiss(self.cfg.faiss.search_batch_size) # (queries_N, topk)
         cands_idxs = cands_idxs.astype(np.int64)
         self.dataset.set_candidates(cands_idxs)

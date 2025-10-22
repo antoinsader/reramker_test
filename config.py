@@ -127,14 +127,14 @@ class TrainingConfig:
     load_last_checkpoint:bool = True
 
     inject_hard_negatives:bool= True
-    hard_negatives_num:int= 5
+    hard_negatives_num:int= 7
     inject_hard_positives:bool= True
-    hard_positives_num:int= 3
+    hard_positives_num:int= 2
     
 
 @dataclass
 class FaissConfig:
-    cluster_samples: int = 1_500_000
+    cluster_samples: int = 1_800_000
     build_batch_size: int = 4096
     search_batch_size: int = 4096
     index_name: str = "IndexHNSWFlat"
