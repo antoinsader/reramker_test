@@ -1080,7 +1080,7 @@ def eval(cfg:GlobalConfig):
 
 if __name__ == "__main__":
     cfg :GlobalConfig = parse_args()
-    
+
 
     if not cfg.skip_train:
         cfg.logger.tag = "train"

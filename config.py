@@ -62,7 +62,7 @@ class PathsConfig:
     global_log_path: str = f"./logs/logger_all.json"
     
     dictionary_raw_path = "./data/raw/train_dictionary.txt"
-    queries_dir = "./data/raw/traindev"
+    queries_raw_dir = "./data/raw/traindev"
 
     result_encoder_dir = None
     checkpoint_dir = None
@@ -90,11 +90,14 @@ class PathsConfig:
 @dataclass
 class TokensConfig:
     max_length:int = 25
-    raw_dictionary_path: str = os.path.join(PathsConfig().raw_dir, "train_dictionary.txt")
-    raw_queries_dir: str = os.path.join(PathsConfig().raw_dir, "traindev")
     raw_test_dir:str = None
     test_split_from_train: bool = True
     test_split_percentage: float = 0.8
+
+    skip_tokenize_dictionary: bool = False
+    skip_tokenize_queries: bool = False
+
+    
 
 
 
