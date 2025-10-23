@@ -28,6 +28,8 @@ def load_queries(data_dir, filter_composite=True, filter_duplicate=True, filter_
             concept = concept.split("||")
             mention = concept[3].strip()
             cui = concept[4].strip()
+            semantic_type = concept[2].strip()
+            
             is_composite = (cui.replace("+","|").count("|") > 0)
 
             # filter composite cui
@@ -37,7 +39,7 @@ def load_queries(data_dir, filter_composite=True, filter_duplicate=True, filter_
             if filter_cuiless and cui == '-1':
                 continue
 
-            data.append((mention,cui))
+            data.append((mention,cui, semantic_type))
     if filter_duplicate:
         data = list(dict.fromkeys(data))
     data = np.array(data)

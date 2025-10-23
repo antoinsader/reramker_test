@@ -64,10 +64,11 @@ def tt(cuis, names, paths_key, tokenizer, cfg ):
     max_length = cfg.tokenize.max_length
     batch_size = 4096
 
+    print("Saving cuis..")
     np.save(paths[paths_key]['ids'] , cuis)
     names_size = len(names)
 
-
+    print(f"Creating memmap...")
     input_ids_mmap = np.memmap(
         paths[paths_key]['inp'],
         mode="w+",
@@ -113,7 +114,9 @@ if __name__=="__main__":
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name)
 
     if not cfg.tokenize.skip_tokenize_dictionary:
+        print(f"Reading dictionary...")
         train_dictionary=load_dictionary(cfg.paths.dictionary_raw_path)
+        
         dictionary_names, dictionary_cuis = [row[0] for row in train_dictionary], [row[1] for row in train_dictionary]
         dictionary_cuis = [d.replace("MESH:", "") for d in dictionary_cuis]
         tt(dictionary_cuis, dictionary_names, 'dict', tokenizer, cfg)
@@ -121,6 +124,7 @@ if __name__=="__main__":
 
 
     if not cfg.tokenize.skip_tokenize_queries:
+        print(f"Reading queries...")
         train_queries = load_queries(cfg.paths.queries_raw_dir)
         query_names, query_cuis = [row[0] for row in train_queries], [row[1] for row in train_queries]
         query_cuis = [d.replace("MESH:", "") for d in query_cuis]
