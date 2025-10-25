@@ -12,7 +12,8 @@ paths = {
         "inp": os.path.join(tokens_dir, "_q_inp.mmap"),
         "att": os.path.join(tokens_dir, "_q_att.mmap") ,
         "ids":  os.path.join(tokens_dir, "_q_ids.npy") ,
-        "meta":  os.path.join(tokens_dir, "_q_meta.json")
+        "meta":  os.path.join(tokens_dir, "_q_meta.json"),
+        "semantics_pkl":  os.path.join(tokens_dir, "_q_semantics.pkl"),
     },
     "dict": {
         "inp": os.path.join(tokens_dir, "_d_inp.mmap"),

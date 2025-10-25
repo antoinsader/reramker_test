@@ -10,6 +10,7 @@ from transformers import AutoTokenizer
 from config import paths
 from config import GlobalConfig
 from data import load_dictionary, load_queries
+from utils import save_pkl
 
 def tokenize_fn(batch, tokenizer, max_length):
     return tokenizer(
@@ -60,13 +61,16 @@ def parse_args():
     return cfg
 
 
-def tt(cuis, names, paths_key, tokenizer, cfg ):
+def tt(cuis, names, paths_key, tokenizer, cfg, semantics=None ):
     max_length = cfg.tokenize.max_length
     batch_size = 4096
 
     print("Saving cuis..")
     np.save(paths[paths_key]['ids'] , cuis)
     names_size = len(names)
+    
+    if semantics and 'semantics_pkl' in paths[paths_key]:
+        save_pkl(semantics, paths[paths_key]['semantics_pkl'])
 
     print(f"Creating memmap...")
     input_ids_mmap = np.memmap(
@@ -119,16 +123,21 @@ if __name__=="__main__":
         
         dictionary_names, dictionary_cuis = [row[0] for row in train_dictionary], [row[1] for row in train_dictionary]
         dictionary_cuis = [d.replace("MESH:", "") for d in dictionary_cuis]
-        tt(dictionary_cuis, dictionary_names, 'dict', tokenizer, cfg)
+        tt(cuis=dictionary_cuis,names= dictionary_names ,  paths_key="dict", tokenizer = tokenizer, cfg=cfg)
 
 
 
     if not cfg.tokenize.skip_tokenize_queries:
         print(f"Reading queries...")
         train_queries = load_queries(cfg.paths.queries_raw_dir)
-        query_names, query_cuis = [row[0] for row in train_queries], [row[1] for row in train_queries]
+        query_names, query_cuis, semantic_types = [row[0] for row in train_queries], [row[1] for row in train_queries], [row[2] for row in train_queries]
         query_cuis = [d.replace("MESH:", "") for d in query_cuis]
-        tt(query_cuis, query_names, 'queries', tokenizer, cfg)
+        tt(cuis=query_cuis,
+           names=query_names, 
+           semantics=semantic_types,  
+           paths_key="queries", 
+           tokenizer = tokenizer, 
+           cfg=cfg)
 
 
 

@@ -295,15 +295,15 @@ class MyModel(nn.Module):
         self.use_cuda = use_cuda
         self.cfg = cfg.train
         self.encoder = encoder
-        self.criterion = info_nce_loss if cfg.loss_type == 'info_nce_loss' else marginal_nll
+        self.criterion = info_nce_loss if self.cfg.loss_type == 'info_nce_loss' else marginal_nll
         self.device = "cuda" if use_cuda else "cpu"
 
-        assert cfg.optimizer_name == 'AdamW', f'Currently only AdamW available'
+        assert self.cfg.optimizer_name == 'AdamW', f'Currently only AdamW available'
 
         self.optimizer = optim.AdamW(
             self.encoder.encoder.parameters(),
-            lr=cfg.learning_rate,
-            weight_decay=cfg.weight_decay,
+            lr=self.cfg.learning_rate,
+            weight_decay=self.cfg.weight_decay,
             fused=self.use_cuda
         )
 
@@ -369,9 +369,9 @@ class Trainer:
         self.device = "cuda"    if self.use_cuda else "cpu"
         self.scaler = torch.amp.GradScaler(enabled=cfg.train.use_amp)
         self.encoder = MyEncoder(self.use_cuda, cfg.model)
-        self.model = MyModel(self.use_cuda, self.encoder, self.cfg.train)
-        self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device)
+        self.model = MyModel(self.use_cuda, self.encoder, self.cfg)
         self.dataset = MyDataset(self.tokens_paths, cfg)
+        self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device, self.dataset)
 
         num_training_steps = len(self.dataset) // self.cfg.train.batch_size * self.cfg.train.num_epochs
         num_warmup_steps = int(0.05 * num_training_steps)
@@ -581,218 +581,8 @@ class TokensPaths():
         self.query_inp_path = paths[query_paths_key]['inp']
         self.query_att_path = paths[query_paths_key]['att']
         self.query_cuis_path = paths[query_paths_key]['ids']
+        self.query_semantics = paths[query_paths_key]['semantics_pkl']
         self.query_shape = load_mmap_shape(paths[query_paths_key]['meta'])
-
-
-class MyFaiss():
-    def __init__(self, cfg: GlobalConfig, tokens_paths:TokensPaths, encoder : MyEncoder, save_index_path, use_cuda, device):
-        self.cfg = cfg.faiss
-        self.use_cuda = use_cuda
-        self.device = device
-        self.tokens_paths = tokens_paths
-        self.encoder = encoder
-        self.save_index_path = save_index_path
-
-        self.faiss_index_name =cfg.faiss.index_name
-        self.faiss_cluster_samples_num = cfg.faiss.cluster_samples
-
-        self.use_amp = cfg.train.use_amp
-        self.topk = cfg.train.topk
-        self.hidden_size = cfg.model.hidden_size
-
-        self.faiss_index = None
-
-    def load_faiss_index(self, path):
-        assert os.path.exists(path),f'Path faiss {path} not exists'
-        gpu_resources = faiss.StandardGpuResources()
-        index = faiss.read_index(path)
-        if self.use_cuda:
-            co = faiss.GpuClonerOptions()
-            co.allowCpuCoarseQuantizer = True
-            index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index, co)
-
-        self.faiss_index = index
-
-    def save_index(self):
-        faiss.write_index(faiss.index_gpu_to_cpu(self.faiss_index), self.save_index_path)
-        return self.save_index_path
-
-
-    def train_sample(self, N, hidden_size):
-        assert self.faiss_index is not None
-        dictionary_inputs =   np.memmap(self.tokens_paths.dict_inp_path,
-            mode="r",
-            dtype=np.int32,
-            shape=self.tokens_paths.dict_shape
-        )
-        dictionary_att = np.memmap( self.tokens_paths.dict_att_path,
-                mode="r",
-                dtype=np.int32,
-                shape=self.tokens_paths.dict_shape
-        )
-        assert dictionary_att.shape[0] == N, f"Something is wrong! N={N}, dtionary att shape is: {dictionary_att.shape}"
-
-
-        sample_size= self.faiss_cluster_samples_num
-        sample_indices = torch.randperm(N)[:sample_size]
-        samples_batch_size = 8_000
-        samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
-
-
-        cursor = 0
-        for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed sample and train clusters"):
-            end = min(start+samples_batch_size, len(sample_indices))
-            batch_idx = sample_indices[start:end]
-
-
-            inp  = torch.as_tensor(dictionary_inputs[batch_idx], device=self.device)
-            att = torch.as_tensor(dictionary_att[batch_idx],device=self.device)
-
-            batch_embeds = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
-            batch_embeds = batch_embeds.contiguous()
-            samples_embeds[cursor : cursor+(end-start)] = batch_embeds
-            cursor += (end -start)
-            del batch_embeds, inp, att
-        del dictionary_att, dictionary_inputs
-        self.faiss_index.train(samples_embeds)
-        del samples_embeds
-        torch.cuda.empty_cache()
-        gc.collect()
-    
-        
-
-    def init_index(self, hidden_size, N):
-        if self.faiss_index_name == 'IndexHNSWFlat':
-            LOGGER.info(f"USING IndexHNSWFlat index")
-            assert self.use_cuda, f'It is better to use_cuda when index is IndexHNSWFlat'
-            assert N > 1_000_000, f"for {N}, it is better to use the flat index"
-
-            gpu_resources = faiss.StandardGpuResources()
-            LOGGER.info(f"FAISS INDEX are being built and trained")
-
-            num_clusters = int(math.sqrt(N) * 2)
-
-            num_bytes = 32 # num bytes per vector in PQ
-            quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
-            quantizer.hnsw.efConstruction = 200
-            quantizer.hnsw.efSearch = 256
-
-            index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
-            index.useFloat16LookupTables = self.use_amp
-            self.faiss_index = index
-            self.train_sample(N, hidden_size)
-            LOGGER.info("Training clusters finsihed ")
-            return True
-        else:
-            assert N <= 1_000_000, f"for {N}, it is better to use the IndexHNSWFlat  index"
-            if self.use_cuda:
-                gpu_resources = faiss.StandardGpuResources()
-                #Index configurations
-                index_conf = faiss.GpuIndexFlatConfig()
-                index_conf.device = torch.cuda.current_device()
-                index_conf.useFloat16 = bool(self.use_cuda)
-
-                #make the index (this index is on gpu)
-                self.faiss_index = faiss.GpuIndexFlatIP(gpu_resources, hidden_size, index_conf)
-            else:
-                #make normal cpu index 
-                self.faiss_index = faiss.IndexFlatIP(hidden_size)
-            return True
-
-
-    def build_faiss(self, batch_size):
-        N = self.tokens_paths.dict_shape[0]
-        hidden_size = self.hidden_size
-
-        if self.faiss_index is None:
-            self.init_index(hidden_size, N)
-        assert self.faiss_index is not None
-
-        self.faiss_index.reset()
-
-        dictionary_inputs = np.memmap(
-                self.tokens_paths.dict_inp_path,
-                mode="r",
-                dtype=np.int32,
-                shape=self.tokens_paths.dict_shape
-            )
-        dictionary_att = np.memmap(
-                self.tokens_paths.dict_att_path,
-                mode="r",
-                dtype=np.int32,
-                shape=self.tokens_paths.dict_shape
-        )
-
-        if self.faiss_index_name == 'IndexHNSWFlat':
-            self.train_sample(N, hidden_size)
-
-
-
-        for start in tqdm(range(0, N, batch_size), desc="Building faiss index"):
-            end = min(start + batch_size, N)
-            inp  = torch.as_tensor(dictionary_inputs[start:end], device=self.device)
-            att = torch.as_tensor(dictionary_att[start:end],device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
-            self.faiss_index.add(embs.contiguous())
-            del inp, att, embs
-        del dictionary_inputs, dictionary_att
-        torch.cuda.empty_cache()
-        gc.collect()
-
-    def search_faiss(self, batch_size):
-
-
-        (tokens_size, max_length ) = self.tokens_paths.query_shape
-        N = tokens_size
-        candidates = np.zeros((N,self.topk))
-        faiss_index = self.faiss_index
-
-        query_inputs = np.memmap(
-                self.tokens_paths.query_inp_path,
-                mode="r",
-                dtype=np.int32,
-                shape=self.tokens_paths.query_shape
-        )
-        query_att = np.memmap(
-                  self.tokens_paths.query_att_path,
-                mode="r",
-                dtype=np.int32,
-                shape=self.tokens_paths.query_shape
-        )
-
-        for start in range(0, N,batch_size):
-            end = min(start + batch_size, N)
-            inp  = torch.as_tensor(query_inputs[start:end], device=self.device)
-            att = torch.as_tensor(query_att[start:end],device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
-            if self.use_cuda:
-                embs = embs.contiguous()
-            else:
-                embs = embs.cpu().numpy().astype(np.float32)
-
-            _, chunk_cand_idxs = faiss_index.search(embs, self.topk)
-
-            candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
-            del inp, att, embs
-        del query_inputs, query_att
-        gc.collect()
-        return candidates
-
-
-    def compute_faiss_recall_at_k(self,cands_idxs ,query_cuis, dict_cuis, k=10):
-        assert cands_idxs is not None
-        correct = 0
-        num_queries = len(query_cuis)
-        dict_cuis = np.array(dict_cuis)
-
-        for i in range(num_queries):
-            q_cui = query_cuis[i]
-            retreived_cuis = dict_cuis[cands_idxs[i, :k] ]
-            if q_cui in retreived_cuis:
-                correct += 1
-        return correct / max(num_queries, 1)
-
-
 
 class MyDataset(Dataset):
     def __init__(self,tokens_paths: TokensPaths, cfg: GlobalConfig):
@@ -802,8 +592,9 @@ class MyDataset(Dataset):
         self.all_candidates_idxs = None
 
 
-        self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
         self.dict_cuis  = np.load(self.tokens_paths.dict_cuis_path)
+        self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
+        self.query_semantics = np.load(self.tokens_paths.query_semantics)
         
         self.inject_hard_negatives = cfg.train.inject_hard_negatives
         self.hard_negatives_num = cfg.train.hard_negatives_num
@@ -959,6 +750,312 @@ class MyDataset(Dataset):
 
 
 
+class MyFaiss():
+    def __init__(self, cfg: GlobalConfig, tokens_paths:TokensPaths, encoder : MyEncoder, save_index_path, use_cuda, device, dataset: MyDataset):
+        self.cfg = cfg.faiss
+        self.use_cuda = use_cuda
+        self.device = device
+        self.tokens_paths = tokens_paths
+        self.encoder = encoder
+        self.save_index_path = save_index_path
+        self.dataset = dataset
+
+        self.faiss_index_name =cfg.faiss.index_name
+        self.faiss_cluster_samples_num = cfg.faiss.cluster_samples
+
+        self.use_amp = cfg.train.use_amp
+        self.topk = cfg.train.topk
+        self.hidden_size = cfg.model.hidden_size
+
+        self.faiss_index = None
+
+    def load_faiss_index(self, path):
+        assert os.path.exists(path),f'Path faiss {path} not exists'
+        gpu_resources = faiss.StandardGpuResources()
+        index = faiss.read_index(path)
+        if self.use_cuda:
+            co = faiss.GpuClonerOptions()
+            co.allowCpuCoarseQuantizer = True
+            index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index, co)
+
+        self.faiss_index = index
+
+    def save_index(self):
+        faiss.write_index(faiss.index_gpu_to_cpu(self.faiss_index), self.save_index_path)
+        return self.save_index_path
+
+
+    def train_sample(self, N, hidden_size):
+        assert self.faiss_index is not None
+        dictionary_inputs =   np.memmap(self.tokens_paths.dict_inp_path,
+            mode="r",
+            dtype=np.int32,
+            shape=self.tokens_paths.dict_shape
+        )
+        dictionary_att = np.memmap( self.tokens_paths.dict_att_path,
+                mode="r",
+                dtype=np.int32,
+                shape=self.tokens_paths.dict_shape
+        )
+        assert dictionary_att.shape[0] == N, f"Something is wrong! N={N}, dtionary att shape is: {dictionary_att.shape}"
+
+
+        sample_size= self.faiss_cluster_samples_num
+        sample_indices = torch.randperm(N)[:sample_size]
+        samples_batch_size = 8_000
+        samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
+
+
+        cursor = 0
+        for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed sample and train clusters"):
+            end = min(start+samples_batch_size, len(sample_indices))
+            batch_idx = sample_indices[start:end]
+
+
+            inp  = torch.as_tensor(dictionary_inputs[batch_idx], device=self.device)
+            att = torch.as_tensor(dictionary_att[batch_idx],device=self.device)
+
+            batch_embeds = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
+            batch_embeds = batch_embeds.contiguous()
+            samples_embeds[cursor : cursor+(end-start)] = batch_embeds
+            cursor += (end -start)
+            del batch_embeds, inp, att
+        del dictionary_att, dictionary_inputs
+        
+        
+        
+        num_clusters = int(math.sqrt(N) * 2)
+        semantic_type_centroids_tensor = self.get_semantic_types_centroids()
+        init_centroids = torch.empty((num_clusters, hidden_size), dtype=torch.float32)
+        init_centroids[:semantic_type_centroids_tensor.shape[0]] = semantic_type_centroids_tensor
+        rand_rows = torch.randperm(len(samples_embeds))[:num_clusters - semantic_type_centroids_tensor.shape[0]]
+        init_centroids[semantic_type_centroids_tensor.shape[0]:] = samples_embeds[rand_rows]
+
+        quantizer = self.faiss_index.quantizer
+        clus = faiss.Clustering(self.hidden_size, num_clusters)
+        clus.centroids = init_centroids.numpy().astype('float32')
+        clus.train(samples_embeds.numpy(), quantizer)
+        self.faiss_index.quantizer = quantizer
+        
+        centroids = faiss.vector_to_array(self.faiss_index.quantizer.xb)
+        centroids = centroids.reshape(num_clusters, self.hidden_size)
+        sim = torch.matmul(torch.tensor(centroids), 
+                        self.semantic_type_centroids.T)
+        dominant = sim.argmax(dim=1)
+        print("Semantic-type distribution over FAISS clusters:", dominant.bincount())
+
+        # self.faiss_index.train(samples_embeds)
+        del samples_embeds
+        torch.cuda.empty_cache()
+        gc.collect()
+    
+    def get_semantic_types_centroids(self):
+        dictionary_inputs =  self.dataset.dictionary_inputs
+        dictionary_att = self.dataset.dictionary_att
+        query_inputs =  self.dataset.query_inputs
+        query_att = self.dataset.query_att
+        
+        
+        dictionary_cuis = self.dataset.dict_cuis
+        queries_cuis = self.dataset.query_cuis
+        queries_semantics = self.dataset.query_semantics
+
+
+        cui_to_semantics = {}
+        for cui, semantic_type in zip(queries_cuis, queries_semantics):
+            cui_to_semantics[cui] = semantic_type
+
+        #boolean mask to see which dictionary cuis has semantics
+        dictionary_cui_has_semantics = [cui in set(cui_to_semantics) for cui in dictionary_cuis]
+        dictionary_cui_has_semantics =  torch.tensor(dictionary_cui_has_semantics, dtype=torch.bool)
+        dictionary_idxs_has_semantics = torch.nonzero(dictionary_cui_has_semantics).squeeze(-1)
+
+        self.encoder.eval()
+
+        # we will average embedings of the dictionaries having semantics
+
+        dict_embs = [] #holding dictionary embedings that has embedings
+        
+        dict_semantics = [] #holding semantic types of each dictionary idx that has semantic, len would be len(dictionary_idxs_has_semantics)
+        batch_size = 4096
+        for start in range(0, len(dictionary_idxs_has_semantics), batch_size):
+            end = min(start+batch_size , len(dictionary_idxs_has_semantics))
+            batch_idxs = dictionary_idxs_has_semantics[start: end]
+            batch_inp = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
+            batch_att = torch.as_tensor(dictionary_att[batch_idxs], device=self.device)
+
+            batch_embs = self.encoder.get_emb(batch_inp, batch_att, use_amp=True, use_no_grad=True)
+            dict_embs.append(batch_embs.cpu())
+            dict_semantics += [cui_to_semantics[dictionary_cuis[i]] for i in batch_idxs]
+        dict_embs = torch.cat(dict_embs)
+        dict_semantics = np.array(dict_semantics)
+
+
+        # 
+        query_embs = []
+        query_cuis_unique = []
+        query_semantics_unique= []
+
+        # cuis that has been seen
+        seen = set()
+        for i, cui in enumerate(queries_cuis):
+            if cui not in cui_to_semantics or cui in seen:
+                continue
+            seen.add(cui)
+            inp = torch.as_tensor(query_inputs[i], device=self.device).unsqueeze(0)
+            att = torch.as_tensor(query_att[i], device=self.device).unsqueeze(0)
+            emb = self.encoder.get_emb(inp, att, use_amp=True, use_no_grad=True)
+            query_embs.append(emb)
+            query_cuis_unique.append(cui)
+            query_semantics_unique.append(cui_to_semantics[cui])
+        query_embs = torch.cat(query_embs)
+
+        # now we will build an embeding for each semantic (50 from dictionary 50% from queries)
+
+        # Each semantic type will accumulate sum of embeddings and count
+        sem_sum = defaultdict(lambda: torch.zeros(self.hidden_size))
+        sem_count = defaultdict(int)
+
+        # Pass 1 — dictionary embeddings
+        for emb, cui in zip(dict_embs, dictionary_cuis[dictionary_cui_has_semantics]):
+            sem = cui_to_semantics[cui]
+            sem_sum[sem] += emb.cpu()
+            sem_count[sem] += 1
+
+        # Pass 2 — query embeddings (unique CUIs)
+        for emb, cui in zip(query_embs, query_cuis_unique):
+            sem = cui_to_semantics[cui]
+            sem_sum[sem] += emb.cpu()
+            sem_count[sem] += 1
+
+        # Final centroids (average)
+        semantic_type_centroids = {
+            sem: sem_sum[sem] / sem_count[sem] for sem in sem_sum
+        }
+
+        semantic_type_centroids_tensor = torch.stack(list(semantic_type_centroids.values()))
+        return semantic_type_centroids_tensor
+
+
+
+    def init_index(self, hidden_size, N):
+        if self.faiss_index_name == 'IndexHNSWFlat':
+            LOGGER.info(f"USING IndexHNSWFlat index")
+            assert self.use_cuda, f'It is better to use_cuda when index is IndexHNSWFlat'
+            assert N > 1_000_000, f"for {N}, it is better to use the flat index"
+
+            gpu_resources = faiss.StandardGpuResources()
+            LOGGER.info(f"FAISS INDEX are being built and trained")
+
+            self.get_semantic_types_embeds()
+
+            num_clusters = int(math.sqrt(N) * 2)
+
+
+
+            num_bytes = 32 # num bytes per vector in PQ
+            quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
+            quantizer.hnsw.efConstruction = 200
+            quantizer.hnsw.efSearch = 256
+
+            index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
+            index.useFloat16LookupTables = self.use_amp
+            self.faiss_index = index
+            self.train_sample(N, hidden_size)
+            LOGGER.info("Training clusters finsihed ")
+            return True
+        else:
+            assert N <= 1_000_000, f"for {N}, it is better to use the IndexHNSWFlat  index"
+            if self.use_cuda:
+                gpu_resources = faiss.StandardGpuResources()
+                #Index configurations
+                index_conf = faiss.GpuIndexFlatConfig()
+                index_conf.device = torch.cuda.current_device()
+                index_conf.useFloat16 = bool(self.use_cuda)
+
+                #make the index (this index is on gpu)
+                self.faiss_index = faiss.GpuIndexFlatIP(gpu_resources, hidden_size, index_conf)
+            else:
+                #make normal cpu index 
+                self.faiss_index = faiss.IndexFlatIP(hidden_size)
+            return True
+
+
+    def build_faiss(self, batch_size):
+        N = self.tokens_paths.dict_shape[0]
+        hidden_size = self.hidden_size
+
+        if self.faiss_index is None:
+            self.init_index(hidden_size, N)
+        assert self.faiss_index is not None
+
+        self.faiss_index.reset()
+
+        dictionary_inputs = self.dataset.dictionary_inputs
+        dictionary_att = self.dataset.dictionary_att
+
+        if self.faiss_index_name == 'IndexHNSWFlat':
+            self.train_sample(N, hidden_size)
+
+
+
+        for start in tqdm(range(0, N, batch_size), desc="Building faiss index"):
+            end = min(start + batch_size, N)
+            inp  = torch.as_tensor(dictionary_inputs[start:end], device=self.device)
+            att = torch.as_tensor(dictionary_att[start:end],device=self.device)
+            embs = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
+            self.faiss_index.add(embs.contiguous())
+            del inp, att, embs
+        del dictionary_inputs, dictionary_att
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    def search_faiss(self, batch_size):
+
+
+        (tokens_size, max_length ) = self.tokens_paths.query_shape
+        N = tokens_size
+        candidates = np.zeros((N,self.topk))
+        faiss_index = self.faiss_index
+
+        query_inputs = self.dataset.query_inputs
+        query_att = self.dataset.query_att
+
+        for start in range(0, N,batch_size):
+            end = min(start + batch_size, N)
+            inp  = torch.as_tensor(query_inputs[start:end], device=self.device)
+            att = torch.as_tensor(query_att[start:end],device=self.device)
+            embs = self.encoder.get_emb(inp, att, use_amp=self.use_amp, use_no_grad=True)
+            if self.use_cuda:
+                embs = embs.contiguous()
+            else:
+                embs = embs.cpu().numpy().astype(np.float32)
+
+            _, chunk_cand_idxs = faiss_index.search(embs, self.topk)
+
+            candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
+            del inp, att, embs
+        del query_inputs, query_att
+        gc.collect()
+        return candidates
+
+
+    def compute_faiss_recall_at_k(self,cands_idxs ,query_cuis, dict_cuis, k=10):
+        assert cands_idxs is not None
+        correct = 0
+        num_queries = len(query_cuis)
+        dict_cuis = np.array(dict_cuis)
+
+        for i in range(num_queries):
+            q_cui = query_cuis[i]
+            retreived_cuis = dict_cuis[cands_idxs[i, :k] ]
+            if q_cui in retreived_cuis:
+                correct += 1
+        return correct / max(num_queries, 1)
+
+
+
+
 class Evaluater:
     def __init__(self, encoder_dir, faiss_path,    cfg:GlobalConfig):
         self.cfg = cfg
@@ -976,8 +1073,8 @@ class Evaluater:
         self.device = "cuda" if self.use_cuda else "cpu"
         self.dataset = MyDataset(self.tokens_paths, cfg )
         self.encoder = MyEncoder(self.use_cuda, cfg.model)
-        self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device)
-        self.model = MyModel(self.use_cuda, self.encoder, cfg.train)
+        self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device, self.dataset)
+        self.model = MyModel(self.use_cuda, self.encoder, cfg)
         self.faiss.load_faiss_index(self.faiss_path)
 
         self.topk = cfg.train.topk
@@ -1095,11 +1192,11 @@ if __name__ == "__main__":
 
 
 
-# python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=48 --loss_type='info_nce_loss'
+# python process.py --training_log_name='small_dictionary_flat_faiss' --faiss_index_name='IndexFlatIP' --num_workers=16 --loss_type='info_nce_loss'
 
 
 
-# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=32  --train_batch_size=32 build_faiss_batch_size=6000
+# python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16  --train_batch_size=32 --build_faiss_batch_size=6000
 
 # eval:
 # python process.py --training_log_name='big_dictionary' --faiss_index_name='IndexHNSWFlat' --num_workers=16 --skip_train --encoder_to_eval='./output/encoder_1'  --eval_faiss_path='./output/encoder_1/faiss_index.faiss'
