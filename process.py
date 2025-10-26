@@ -6,6 +6,7 @@
 
 import datetime
 import gc, json, psutil, os, torch, time, faiss, logging
+import random
 import math
 import numpy as np
 from torch.utils.data import Dataset
@@ -887,17 +888,52 @@ class MyFaiss():
     
     def train_samples(self, N):
         assert self.faiss_index is not None
+        sample_size= self.faiss_cluster_samples_num
+
         dictionary_inputs =   self.dataset.dictionary_inputs
         dictionary_att = self.dataset.dictionary_att
+        
+        
+        query_semantics = self.dataset.query_semantics
+        dict_cuis = self.dataset.dict_cuis
+        queries_cuis = self.dataset.query_cuis
+        unique_semantics = list(set(query_semantics))
+        cui_to_semantic=  {cui: semantic for   cui, semantic in zip(queries_cuis, query_semantics)}
+
+        dictionary_idxs_has_semantics = [idx for idx, cui in enumerate(dict_cuis) if cui in cui_to_semantic]
+
+        semantic_to_dict_idxs = defaultdict(list)
+        for idx, cui in enumerate(dict_cuis):
+            if cui in cui_to_semantic:
+                sem = cui_to_semantic[cui]
+                semantic_to_dict_idxs[sem].append(idx)
+
+        total_cuis_with_semantics = sum(len(v) for v in semantic_to_dict_idxs.values())
+
+        num_semantics = len(semantic_to_dict_idxs)
+        sample_indices = []
+        for sem, idxs in semantic_to_dict_idxs.items():
+            weight = len(idxs) / total_cuis_with_semantics
+            n_to_sample = max(1, int(weight * sample_size))
+            chosen = random.sample(idxs, min(n_to_sample, len(idxs)))
+            sample_indices.extend(chosen)
+
+        if len(sample_indices) < sample_size:
+            remaining = list(set(range(N)) - set(sample_indices))
+            needed = sample_size - len(sample_indices)
+            sample_indices.extend(random.sample(remaining, min(needed, len(remaining))))
+
+        sample_indices = torch.tensor(sample_indices)
+        print(f"Num of samples: {sample_indices.shape}")
+
 
         assert dictionary_att.shape[0] == N, f"Something is wrong! N={N}, dtionary att shape is: {dictionary_att.shape}"
 
 
 
-        sample_size= self.faiss_cluster_samples_num
-        sample_indices = torch.randperm(N)[:sample_size]
-        samples_batch_size = 8_000
-        samples_embeds = torch.empty((sample_size, self.hidden_size), dtype=torch.float32)
+        # sample_indices = torch.randperm(N)[:sample_size]
+        # samples_batch_size = 16_000
+        # samples_embeds = torch.empty((sample_size, self.hidden_size), dtype=torch.float32)
 
 
         cursor = 0
