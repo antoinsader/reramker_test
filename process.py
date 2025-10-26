@@ -799,6 +799,7 @@ class MyFaiss():
         self.hidden_size = cfg.model.hidden_size
 
         self.faiss_index = None
+        self.dictionary_entries_n = None
 
     def load_faiss_index(self, path):
         assert os.path.exists(path),f'Path faiss {path} not exists'
@@ -816,19 +817,71 @@ class MyFaiss():
         return self.save_index_path
 
 
-    def train_sample(self, N, hidden_size):
+    def compute_semantic_types_centroids(self):
+        LOGGER.info("Computing semantic types centroids")
+        dictionary_inputs =  self.dataset.dictionary_inputs
+        dictionary_att = self.dataset.dictionary_att
+        
+        query_inputs =  self.dataset.query_inputs
+        query_att = self.dataset.query_att
+        
+        
+        dictionary_cuis = self.dataset.dict_cuis
+        queries_cuis = self.dataset.query_cuis
+        queries_semantics = self.dataset.query_semantics
+
+
+        cui_to_semantics = {cui: semantic_type for cui, semantic_type in zip(queries_cuis, queries_semantics)}
+
+        #boolean mask to see which dictionary cuis has semantics
+        dictionary_idxs_has_semantics = [i for i, cui in enumerate(dictionary_cuis) if cui in cui_to_semantics]
+        self.encoder.eval()
+        batch_size = 4096
+        M  = len(dictionary_idxs_has_semantics)
+
+        semantics_sum  = defaultdict(lambda: torch.zeros(self.hidden_size, dtype=torch.float32))
+        semantics_count = defaultdict(int)
+
+        #embed dictionary semantics
+        for start in tqdm(range(0, M, batch_size ), desc="embed semantic dictionary entries "):
+            end = min(start+batch_size, M)
+            idxs = dictionary_idxs_has_semantics[start: end]
+            inp = torch.as_tensor(dictionary_inputs[idxs], device=self.device)
+            att = torch.as_tensor(dictionary_att[idxs], device=self.device)
+            embs = self.encoder.get_emb(inp, att, use_amp=True, use_no_grad=True)
+            for emb, cui in zip(embs, [dictionary_cuis[i ] for i in idxs]):
+                semantic = cui_to_semantics[cui]
+                semantics_sum[semantic] += emb.cpu()
+                semantics_count[semantic] += 1
+            del inp, att, embs
+        torch.cuda.empty_cache()
+
+        #embed queries semantics (1 cui for each semantic)
+        cui_seen = set()
+        for i, cui in enumerate(queries_cuis):
+            if cui not in cui_to_semantics or cui in cui_seen:
+                continue
+            cui_seen.add(cui)
+            inp = torch.as_tensor(query_inputs[i], device=self.device).unsqueeze(0)
+            att = torch.as_tensor(query_att[i], device=self.device).unsqueeze(0)
+            emb = self.encoder.get_emb(inp, att, use_amp=True, use_no_grad=True)
+            semantic = cui_to_semantics[cui]
+            semantics_sum[semantic] += emb.cpu().squeeze(0)
+            semantics_count[semantic] += 1
+            del inp, att, emb
+        torch.cuda.empty_cache()
+
+        centroids =     [semantics_sum[semantic] / semantics_count[semantic] for semantic in semantics_sum ]
+        return torch.stack(centroids)
+
+
+    def get_samples_embeds(self, N, hidden_size):
         assert self.faiss_index is not None
-        dictionary_inputs =   np.memmap(self.tokens_paths.dict_inp_path,
-            mode="r",
-            dtype=np.int32,
-            shape=self.tokens_paths.dict_shape
-        )
-        dictionary_att = np.memmap( self.tokens_paths.dict_att_path,
-                mode="r",
-                dtype=np.int32,
-                shape=self.tokens_paths.dict_shape
-        )
+        dictionary_inputs =   self.dataset.dictionary_inputs
+        dictionary_att = self.dataset.dictionary_att
+
         assert dictionary_att.shape[0] == N, f"Something is wrong! N={N}, dtionary att shape is: {dictionary_att.shape}"
+
 
 
         sample_size= self.faiss_cluster_samples_num
@@ -852,122 +905,33 @@ class MyFaiss():
             cursor += (end -start)
             del batch_embeds, inp, att
         del dictionary_att, dictionary_inputs
-        
-        
-        
-        num_clusters = int(math.sqrt(N) * 2)
-        semantic_type_centroids_tensor = self.get_semantic_types_centroids()
-        init_centroids = torch.empty((num_clusters, hidden_size), dtype=torch.float32)
-        init_centroids[:semantic_type_centroids_tensor.shape[0]] = semantic_type_centroids_tensor
-        rand_rows = torch.randperm(len(samples_embeds))[:num_clusters - semantic_type_centroids_tensor.shape[0]]
-        init_centroids[semantic_type_centroids_tensor.shape[0]:] = samples_embeds[rand_rows]
-
-        quantizer = self.faiss_index.quantizer
-        clus = faiss.Clustering(self.hidden_size, num_clusters)
-        clus.centroids = init_centroids.numpy().astype('float32')
-        clus.train(samples_embeds.numpy(), quantizer)
-        self.faiss_index.quantizer = quantizer
-        
-        centroids = faiss.vector_to_array(self.faiss_index.quantizer.xb)
-        centroids = centroids.reshape(num_clusters, self.hidden_size)
-        sim = torch.matmul(torch.tensor(centroids), 
-                        self.semantic_type_centroids.T)
-        dominant = sim.argmax(dim=1)
-        print("Semantic-type distribution over FAISS clusters:", dominant.bincount())
+        # centroids = faiss.vector_to_array(self.faiss_index.quantizer.xb)
+        # centroids = centroids.reshape(num_clusters, self.hidden_size)
+        # sim = torch.matmul(torch.tensor(centroids), 
+        #                 self.semantic_type_centroids.T)
+        # dominant = sim.argmax(dim=1)
+        # print("Semantic-type distribution over FAISS clusters:", dominant.bincount())
 
         # self.faiss_index.train(samples_embeds)
-        del samples_embeds
-        torch.cuda.empty_cache()
-        gc.collect()
-    
-    def get_semantic_types_centroids(self):
-        dictionary_inputs =  self.dataset.dictionary_inputs
-        dictionary_att = self.dataset.dictionary_att
-        query_inputs =  self.dataset.query_inputs
-        query_att = self.dataset.query_att
-        
-        
-        dictionary_cuis = self.dataset.dict_cuis
-        queries_cuis = self.dataset.query_cuis
-        queries_semantics = self.dataset.query_semantics
+        return samples_embeds
 
 
-        cui_to_semantics = {}
-        for cui, semantic_type in zip(queries_cuis, queries_semantics):
-            cui_to_semantics[cui] = semantic_type
 
-        #boolean mask to see which dictionary cuis has semantics
-        dictionary_cui_has_semantics = [cui in set(cui_to_semantics) for cui in dictionary_cuis]
-        dictionary_cui_has_semantics =  torch.tensor(dictionary_cui_has_semantics, dtype=torch.bool)
-        dictionary_idxs_has_semantics = torch.nonzero(dictionary_cui_has_semantics).squeeze(-1)
+    def train_ivf_clusters(self, num_clusters, samples_embeds, semantic_centroids):
 
-        self.encoder.eval()
+        hidden_size = self.hidden_size
 
-        # we will average embedings of the dictionaries having semantics
-
-        dict_embs = [] #holding dictionary embedings that has embedings
-        
-        dict_semantics = [] #holding semantic types of each dictionary idx that has semantic, len would be len(dictionary_idxs_has_semantics)
-        batch_size = 4096
-        for start in range(0, len(dictionary_idxs_has_semantics), batch_size):
-            end = min(start+batch_size , len(dictionary_idxs_has_semantics))
-            batch_idxs = dictionary_idxs_has_semantics[start: end]
-            batch_inp = torch.as_tensor(dictionary_inputs[batch_idxs], device=self.device)
-            batch_att = torch.as_tensor(dictionary_att[batch_idxs], device=self.device)
-
-            batch_embs = self.encoder.get_emb(batch_inp, batch_att, use_amp=True, use_no_grad=True)
-            dict_embs.append(batch_embs.cpu())
-            dict_semantics += [cui_to_semantics[dictionary_cuis[i]] for i in batch_idxs]
-        dict_embs = torch.cat(dict_embs)
-        dict_semantics = np.array(dict_semantics)
-
-
-        # 
-        query_embs = []
-        query_cuis_unique = []
-        query_semantics_unique= []
-
-        # cuis that has been seen
-        seen = set()
-        for i, cui in enumerate(queries_cuis):
-            if cui not in cui_to_semantics or cui in seen:
-                continue
-            seen.add(cui)
-            inp = torch.as_tensor(query_inputs[i], device=self.device).unsqueeze(0)
-            att = torch.as_tensor(query_att[i], device=self.device).unsqueeze(0)
-            emb = self.encoder.get_emb(inp, att, use_amp=True, use_no_grad=True)
-            query_embs.append(emb)
-            query_cuis_unique.append(cui)
-            query_semantics_unique.append(cui_to_semantics[cui])
-        query_embs = torch.cat(query_embs)
-
-        # now we will build an embeding for each semantic (50 from dictionary 50% from queries)
-
-        # Each semantic type will accumulate sum of embeddings and count
-        sem_sum = defaultdict(lambda: torch.zeros(self.hidden_size))
-        sem_count = defaultdict(int)
-
-        # Pass 1 — dictionary embeddings
-        for emb, cui in zip(dict_embs, dictionary_cuis[dictionary_cui_has_semantics]):
-            sem = cui_to_semantics[cui]
-            sem_sum[sem] += emb.cpu()
-            sem_count[sem] += 1
-
-        # Pass 2 — query embeddings (unique CUIs)
-        for emb, cui in zip(query_embs, query_cuis_unique):
-            sem = cui_to_semantics[cui]
-            sem_sum[sem] += emb.cpu()
-            sem_count[sem] += 1
-
-        # Final centroids (average)
-        semantic_type_centroids = {
-            sem: sem_sum[sem] / sem_count[sem] for sem in sem_sum
-        }
-
-        semantic_type_centroids_tensor = torch.stack(list(semantic_type_centroids.values()))
-        return semantic_type_centroids_tensor
-
-
+        quantizer = self.faiss_index.quantizer
+        clustering = faiss.Clustering(hidden_size ,num_clusters)
+        num_semantic_centroids = semantic_centroids.shape[0]
+        init_centroids = torch.empty((num_clusters, hidden_size), dtype=torch.float32)
+        init_centroids[:num_semantic_centroids] = semantic_centroids
+        random_rows = torch.randperm(len(samples_embeds))[:num_clusters -num_semantic_centroids]
+        init_centroids[num_semantic_centroids:] = samples_embeds[random_rows]
+        clustering.centroids = init_centroids.numpy().astype("float32")
+        clustering.train(samples_embeds.numpy(), quantizer)
+        self.faiss_index.quantizer = quantizer
+        LOGGER.info("FAISS cluster training finished")
 
     def init_index(self, hidden_size, N):
         if self.faiss_index_name == 'IndexHNSWFlat':
@@ -978,21 +942,18 @@ class MyFaiss():
             gpu_resources = faiss.StandardGpuResources()
             LOGGER.info(f"FAISS INDEX are being built and trained")
 
-            self.get_semantic_types_embeds()
-
             num_clusters = int(math.sqrt(N) * 2)
-
-
-
             num_bytes = 32 # num bytes per vector in PQ
             quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
             quantizer.hnsw.efConstruction = 200
             quantizer.hnsw.efSearch = 256
-
             index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
             index.useFloat16LookupTables = self.use_amp
             self.faiss_index = index
-            self.train_sample(N, hidden_size)
+
+            semantic_centroids = self.compute_semantic_types_centroids()
+            samples_embeds = self.get_samples_embeds(N, self.hidden_size)
+            self.train_ivf_clusters(num_clusters, samples_embeds, semantic_centroids)
             LOGGER.info("Training clusters finsihed ")
             return True
         else:
@@ -1014,21 +975,16 @@ class MyFaiss():
 
     def build_faiss(self, batch_size):
         N = self.tokens_paths.dict_shape[0]
+        self.dictionary_entries_n  = N
         hidden_size = self.hidden_size
 
         if self.faiss_index is None:
             self.init_index(hidden_size, N)
         assert self.faiss_index is not None
 
-        self.faiss_index.reset()
 
         dictionary_inputs = self.dataset.dictionary_inputs
         dictionary_att = self.dataset.dictionary_att
-
-        if self.faiss_index_name == 'IndexHNSWFlat':
-            self.train_sample(N, hidden_size)
-
-
 
         for start in tqdm(range(0, N, batch_size), desc="Building faiss index"):
             end = min(start + batch_size, N)
