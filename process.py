@@ -106,27 +106,31 @@ class MyLogger:
 
         self.one_time_events_set.add(event_tag)
 
-        msg = f"[{big_tag}-{event_tag}] "
+        msg = f"\n ==================== \n   START MESSAGE - [{big_tag}]-[{event_tag}]    \n ====================" 
+
         if epoch:
-            msg += f"-epoch_{epoch}"
+            msg += f" epoch_{epoch}"
         if message: 
             msg += f" | {message}"
 
         if t0:
             elapsed = time.time() - t0
-            msg += f" | elapsed time: {elapsed:.5f}seconds "
+            msg += f"\n elapsed time: {elapsed:.5f}seconds "
 
 
         if not log_memory:
+            msg += f"\n ==================== \n   END MESSAGE    \n ====================" 
             return self.logger.info(f"\n{msg}") if log_immediate else self.messages.append(f"\n{msg}")
 
-        msg += f" \n\n | CPU Memory usage: {self.current_cpu_mem_usage():.1f}MB "
+        msg += f" \n\n CPU Memory usage: {self.current_cpu_mem_usage():.1f}MB "
         if self.use_cuda:
             (free, total) = self.current_gpu_mem_usage()
             msg += f" | GPU memory total/free: {total:.1f}/{free:.1f}MB"
             (alloc, alloc_peak, res, res_peak) = self.current_gpu_stats()
             msg += f" | CUDA: allocated/peak: {alloc:.1f}/{alloc_peak:.1f}MB, reserved/peak {res:.1f}/{res_peak:.1f}MB"
-        msg += f'\n\n'
+        
+        msg += f"\n ==================== \n   END MESSAGE    \n ====================" 
+        msg += f'\n'
 
         return self.logger.info(f"\n{msg}") if log_immediate else self.messages.append(f"\n{msg}")
 
@@ -594,8 +598,8 @@ class MyDataset(Dataset):
 
         self.dict_cuis  = np.load(self.tokens_paths.dict_cuis_path)
         self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
-        self.query_semantics = get_pkl(self.tokens_paths.query_semantics) 
-        
+        self.query_semantics = get_pkl(self.tokens_paths.query_semantics)
+
         self.inject_hard_negatives = cfg.train.inject_hard_negatives
         self.hard_negatives_num = cfg.train.hard_negatives_num
         self.inject_hard_positives = cfg.train.inject_hard_positives

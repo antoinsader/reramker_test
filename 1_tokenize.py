@@ -69,7 +69,7 @@ def tt(cuis, names, paths_key, tokenizer, cfg, semantics=None ):
     np.save(paths[paths_key]['ids'] , cuis)
     names_size = len(names)
     
-    if semantics and 'semantics_pkl' in paths[paths_key]:
+    if semantics:
         save_pkl(semantics, paths[paths_key]['semantics_pkl'])
 
     print(f"Creating memmap...")
