@@ -97,43 +97,70 @@ class MyLogger:
             f"[GPU-MEM] step={step} | alloc={alloc:.1f}MB | res={res:.1f}MB | "
             f"peak_alloc={peak_alloc:.1f}MB | peak_res={peak_res:.1f}MB"
         )
-
-    def log_event(self, event_tag, message=None, t0=None, log_immediate=True, first_iteration_only=False, log_memory=True, epoch=None):
+        
+        
+        
+    def log_event(
+        self,
+        event_tag,
+        message=None,
+        t0=None,
+        log_immediate=True,
+        first_iteration_only=False,
+        log_memory=True,
+        epoch=None,
+        ):
         if first_iteration_only and event_tag in self.one_time_events_set:
             return True
 
+        self.one_time_events_set.add(event_tag)
         big_tag = self.cfg.logger.tag
 
-        self.one_time_events_set.add(event_tag)
+        # HEADER
+        header = f"[{big_tag}] :: [{event_tag}]"
+        if epoch is not None:
+            header += f" :: epoch {epoch}"
 
-        msg = f"\n ==================== \n   START MESSAGE - [{big_tag}]-[{event_tag}]    \n ====================" 
-
-        if epoch:
-            msg += f" epoch_{epoch}"
-        if message: 
-            msg += f" | {message}"
-
+        # Build message body
+        lines = []
+        if message:
+            lines.append(f"Message     : {message}")
         if t0:
             elapsed = time.time() - t0
-            msg += f"\n elapsed time: {elapsed:.5f}seconds "
+            lines.append(f"Elapsed time: {elapsed:.2f} seconds")
 
+        if log_memory:
+            cpu_mem = f"{self.current_cpu_mem_usage():.1f} MB"
+            lines.append(f"CPU Memory  : {cpu_mem}")
 
-        if not log_memory:
-            msg += f"\n ==================== \n   END MESSAGE    \n ====================" 
-            return self.logger.info(f"\n{msg}") if log_immediate else self.messages.append(f"\n{msg}")
+            if self.use_cuda:
+                free, total = self.current_gpu_mem_usage()
+                alloc, alloc_peak, res, res_peak = self.current_gpu_stats()
+                lines.append(f"GPU Memory  : total={total:.1f} MB | free={free:.1f} MB")
+                lines.append(
+                    f"CUDA Alloc  : current={alloc:.1f} MB | peak={alloc_peak:.1f} MB"
+                )
+                lines.append(
+                    f"CUDA Reserv : current={res:.1f} MB | peak={res_peak:.1f} MB"
+                )
 
-        msg += f" \n\n CPU Memory usage: {self.current_cpu_mem_usage():.1f}MB "
-        if self.use_cuda:
-            (free, total) = self.current_gpu_mem_usage()
-            msg += f" | GPU memory total/free: {total:.1f}/{free:.1f}MB"
-            (alloc, alloc_peak, res, res_peak) = self.current_gpu_stats()
-            msg += f" | CUDA: allocated/peak: {alloc:.1f}/{alloc_peak:.1f}MB, reserved/peak {res:.1f}/{res_peak:.1f}MB"
-        
-        msg += f"\n ==================== \n   END MESSAGE    \n ====================" 
-        msg += f'\n'
+        # Construct formatted block
+        border = "=" * 70
+        formatted = (
+            f"\n{border}\n"
+            f"▶ EVENT START :: {header}\n"
+            f"{'-' * 70}\n"
+            + "\n".join(lines)
+            + f"\n{'-' * 70}\n"
+            f"■ EVENT END :: {event_tag}\n"
+            f"{border}\n"
+        )
 
-        return self.logger.info(f"\n{msg}") if log_immediate else self.messages.append(f"\n{msg}")
-
+        if log_immediate:
+            return self.logger.info(formatted)
+        else:
+            self.messages.append(formatted)
+            return formatted
 
 # ====================
 # MY ENCODER
