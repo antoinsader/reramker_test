@@ -836,7 +836,7 @@ class MyFaiss():
         #boolean mask to see which dictionary cuis has semantics
         dictionary_idxs_has_semantics = [i for i, cui in enumerate(dictionary_cuis) if cui in cui_to_semantics]
         self.encoder.encoder.eval()
-        batch_size = 4096
+        batch_size = 6096
         M  = len(dictionary_idxs_has_semantics)
 
         semantics_sum  = defaultdict(lambda: torch.zeros(self.hidden_size, dtype=torch.float32))
@@ -858,7 +858,7 @@ class MyFaiss():
 
         #embed queries semantics (1 cui for each semantic)
         cui_seen = set()
-        for i, cui in enumerate(queries_cuis):
+        for i, cui in tqdm(enumerate(queries_cuis), desc="embed semantic queries "):
             if cui not in cui_to_semantics or cui in cui_seen:
                 continue
             cui_seen.add(cui)
@@ -891,7 +891,7 @@ class MyFaiss():
 
 
         cursor = 0
-        for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed sample and train clusters"):
+        for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed samples"):
             end = min(start+samples_batch_size, len(sample_indices))
             batch_idx = sample_indices[start:end]
 
@@ -918,20 +918,24 @@ class MyFaiss():
 
 
     def train_ivf_clusters(self, num_clusters, samples_embeds, semantic_centroids):
-
         hidden_size = self.hidden_size
-
-        quantizer = self.faiss_index.quantizer
-        clustering = faiss.Clustering(hidden_size ,num_clusters)
         num_semantic_centroids = semantic_centroids.shape[0]
+
+        #init centroids:
         init_centroids = torch.empty((num_clusters, hidden_size), dtype=torch.float32)
         init_centroids[:num_semantic_centroids] = semantic_centroids
         random_rows = torch.randperm(len(samples_embeds))[:num_clusters -num_semantic_centroids]
         init_centroids[num_semantic_centroids:] = samples_embeds[random_rows]
-        clustering.centroids = init_centroids.numpy().astype("float32")
-        clustering.train(samples_embeds.numpy(), quantizer)
+        
+        #convert
+        samples_np = samples_embeds.numpy().astype("float32")
+        init_centroids_np = init_centroids.numpy().astype("float32")
+        
+        quantizer = self.faiss_index.quantizer
+        faiss.kmeans_clustering(samples_np, num_clusters, init_centroids=init_centroids_np, verbose=True)
         self.faiss_index.quantizer = quantizer
-        LOGGER.info("FAISS cluster training finished")
+
+
 
     def init_index(self, hidden_size, N):
         if self.faiss_index_name == 'IndexHNSWFlat':
@@ -951,8 +955,13 @@ class MyFaiss():
             index.useFloat16LookupTables = self.use_amp
             self.faiss_index = index
 
+
+
             semantic_centroids = self.compute_semantic_types_centroids()
+            LOGGER.info(f"Centroids finished calculating..")
+            LOGGER.info(f"Getting samples embedings..")
             samples_embeds = self.get_samples_embeds(N, self.hidden_size)
+            LOGGER.info(f"Training clusters started..")
             self.train_ivf_clusters(num_clusters, samples_embeds, semantic_centroids)
             LOGGER.info("Training clusters finsihed ")
             return True
