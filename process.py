@@ -798,6 +798,10 @@ class MyFaiss():
         self.topk = cfg.train.topk
         self.hidden_size = cfg.model.hidden_size
 
+
+        num_threads = min(32, os.cpu_count() or 8)
+        faiss.omp_set_num_threads(num_threads)
+
         self.faiss_index = None
         self.dictionary_entries_n = None
 
@@ -923,7 +927,7 @@ class MyFaiss():
 
     def train_ivf_clusters(self, num_clusters, samples_embeds, semantic_centroids):
         hidden_size = self.hidden_size
-        LOGGER.info(f"Training FAISS clusters with warm-start centroids: {semantic_centroids.shape[0]}")
+        LOGGER.info(f"Training FAISS clusters with warm start centroids: {semantic_centroids.shape[0]}")
 
         # Convert to numpy once
         samples_np = samples_embeds.cpu().numpy().astype("float32")
@@ -949,7 +953,7 @@ class MyFaiss():
         # --- Clustering parameters
         clustering = faiss.Clustering(hidden_size, num_clusters)
         clustering.niter = 20
-        clustering.max_points_per_centroid = 1000
+        clustering.max_points_per_centroid = 512
 
         # --- Run clustering
         clustering.train(samples_np, init_quantizer)
@@ -988,7 +992,7 @@ class MyFaiss():
             gpu_resources = faiss.StandardGpuResources()
             LOGGER.info(f"FAISS INDEX are being built and trained")
 
-            num_clusters = int(math.sqrt(N) * 2)
+            num_clusters = int(math.sqrt(N))
             num_bytes = 32 # num bytes per vector in PQ
             quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
             quantizer.hnsw.efConstruction = 200
