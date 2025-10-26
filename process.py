@@ -884,8 +884,8 @@ class MyFaiss():
         centroids =     [semantics_sum[semantic] / semantics_count[semantic] for semantic in semantics_sum ]
         return torch.stack(centroids)
 
-
-    def get_samples_embeds(self, N, hidden_size):
+    
+    def train_samples(self, N, hidden_size):
         assert self.faiss_index is not None
         dictionary_inputs =   self.dataset.dictionary_inputs
         dictionary_att = self.dataset.dictionary_att
@@ -915,79 +915,52 @@ class MyFaiss():
             cursor += (end -start)
             del batch_embeds, inp, att
         del dictionary_att, dictionary_inputs
-        # centroids = faiss.vector_to_array(self.faiss_index.quantizer.xb)
-        # centroids = centroids.reshape(num_clusters, self.hidden_size)
-        # sim = torch.matmul(torch.tensor(centroids), 
-        #                 self.semantic_type_centroids.T)
-        # dominant = sim.argmax(dim=1)
-        # print("Semantic-type distribution over FAISS clusters:", dominant.bincount())
+        self.faiss_index.train(samples_embeds)
+        del samples_embeds
+        torch.cuda.empty_cache()
+        gc.collect()
 
-        # self.faiss_index.train(samples_embeds)
-        return samples_embeds
 
     def train_ivf_clusters(self, num_clusters, samples_embeds, semantic_centroids):
         hidden_size = self.hidden_size
         LOGGER.info(f"Training FAISS clusters with warm start centroids: {semantic_centroids.shape[0]}")
 
         # Convert to numpy once
-        samples_np = samples_embeds.cpu().numpy().astype("float32")
-        init_centroids_np = semantic_centroids.cpu().numpy().astype("float32")
+        # samples_np = samples_embeds.cpu().numpy().astype("float32")
+        # init_centroids_np = semantic_centroids.cpu().numpy().astype("float32")
 
-        # Fill remaining centroids randomly from samples
-        num_semantic = init_centroids_np.shape[0]
-        if num_semantic < num_clusters:
-            rand_rows = torch.randperm(len(samples_embeds))[:num_clusters - num_semantic]
-            rand_np = samples_np[rand_rows]
-            init_centroids_np = np.vstack([init_centroids_np, rand_np])
-        elif num_semantic > num_clusters:
-            init_centroids_np = init_centroids_np[:num_clusters]
+        # # Fill remaining centroids randomly from samples
+        # num_semantic = init_centroids_np.shape[0]
+        # if num_semantic < num_clusters:
+        #     rand_rows = torch.randperm(len(samples_embeds))[:num_clusters - num_semantic]
+        #     rand_np = samples_np[rand_rows]
+        #     init_centroids_np = np.vstack([init_centroids_np, rand_np])
+        # elif num_semantic > num_clusters:
+        #     init_centroids_np = init_centroids_np[:num_clusters]
 
-        assert init_centroids_np.shape == (num_clusters, hidden_size)
+        # assert init_centroids_np.shape == (num_clusters, hidden_size)
 
-        # --- Prepare a quantizer with these initial centroids
-        metric_type = faiss.METRIC_INNER_PRODUCT if isinstance(self.faiss_index, faiss.IndexFlatIP) \
-                    else faiss.METRIC_L2
-        init_quantizer = faiss.IndexFlat(hidden_size, metric_type)
-        init_quantizer.add(init_centroids_np)
+        # # --- Prepare a quantizer with these initial centroids
+        # metric_type = faiss.METRIC_INNER_PRODUCT if isinstance(self.faiss_index, faiss.IndexFlatIP) \
+        #             else faiss.METRIC_L2
+        # init_quantizer = faiss.IndexFlat(hidden_size, metric_type)
+        # init_quantizer.add(init_centroids_np)
 
-        # --- Clustering parameters
-        clustering = faiss.Clustering(hidden_size, num_clusters)
-        clustering.niter = 20
-        clustering.max_points_per_centroid = 512
+        # # --- Clustering parameters
+        # clustering = faiss.Clustering(hidden_size, num_clusters)
+        # clustering.niter = 20
+        # clustering.max_points_per_centroid = 512
 
-        gpu_resources = faiss.StandardGpuResources()
-        LOGGER.info("Running FAISS GPU clustering ... this may take several minutes for large data.")
-        faiss.clustering_gpu(
-            gpu_resources,
-            samples_np,
-            clustering,
-            init_quantizer
-        )
-        # --- Run clustering
+    
+        # # --- Run clustering
         # clustering.train(samples_np, init_quantizer)
 
-        # --- Attach the trained quantizer to FAISS index
-        self.faiss_index.quantizer = init_quantizer
+        # # --- Attach the trained quantizer to FAISS index
+        # self.faiss_index.quantizer = init_quantizer
+        
         LOGGER.info("FAISS cluster training finished.")
 
 
-    # def train_ivf_clusters(self, num_clusters, samples_embeds, semantic_centroids):
-    #     hidden_size = self.hidden_size
-    #     num_semantic_centroids = semantic_centroids.shape[0]
-
-    #     #init centroids:
-    #     init_centroids = torch.empty((num_clusters, hidden_size), dtype=torch.float32)
-    #     init_centroids[:num_semantic_centroids] = semantic_centroids
-    #     random_rows = torch.randperm(len(samples_embeds))[:num_clusters -num_semantic_centroids]
-    #     init_centroids[num_semantic_centroids:] = samples_embeds[random_rows]
-        
-    #     #convert
-    #     samples_np = samples_embeds.numpy().astype("float32")
-    #     init_centroids_np = init_centroids.numpy().astype("float32")
-        
-    #     quantizer = self.faiss_index.quantizer
-    #     faiss.kmeans_clustering(samples_np, num_clusters, init_centroids=init_centroids_np, verbose=True)
-    #     self.faiss_index.quantizer = quantizer
 
 
 
@@ -1000,7 +973,7 @@ class MyFaiss():
             gpu_resources = faiss.StandardGpuResources()
             LOGGER.info(f"FAISS INDEX are being built and trained")
 
-            num_clusters = int(math.sqrt(N))
+            num_clusters = int(math.sqrt(N) * 2 )
             num_bytes = 32 # num bytes per vector in PQ
             quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
             quantizer.hnsw.efConstruction = 200
@@ -1008,16 +981,10 @@ class MyFaiss():
             index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
             index.useFloat16LookupTables = self.use_amp
             self.faiss_index = index
+            self.train_samples()
+            # samples_embeds = self.get_samples_embeds(N, self.hidden_size)
+            # self.train_ivf_clusters(num_clusters, samples_embeds)
 
-
-
-            semantic_centroids = self.compute_semantic_types_centroids()
-            LOGGER.info(f"Centroids finished calculating..")
-            LOGGER.info(f"Getting samples embedings..")
-            samples_embeds = self.get_samples_embeds(N, self.hidden_size)
-            LOGGER.info(f"Training clusters started..")
-            self.train_ivf_clusters(num_clusters, samples_embeds, semantic_centroids)
-            LOGGER.info("Training clusters finsihed ")
             return True
         else:
             assert N <= 1_000_000, f"for {N}, it is better to use the IndexHNSWFlat  index"

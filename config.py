@@ -142,7 +142,7 @@ class TrainingConfig:
 
 @dataclass
 class FaissConfig:
-    cluster_samples: int = 500_000
+    cluster_samples: int = 1_000_000
     build_batch_size: int = 4096
     search_batch_size: int = 4096
     index_name: str = "IndexHNSWFlat"
