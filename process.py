@@ -885,7 +885,7 @@ class MyFaiss():
         return torch.stack(centroids)
 
     
-    def train_samples(self, N, hidden_size):
+    def train_samples(self, N):
         assert self.faiss_index is not None
         dictionary_inputs =   self.dataset.dictionary_inputs
         dictionary_att = self.dataset.dictionary_att
@@ -897,7 +897,7 @@ class MyFaiss():
         sample_size= self.faiss_cluster_samples_num
         sample_indices = torch.randperm(N)[:sample_size]
         samples_batch_size = 8_000
-        samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
+        samples_embeds = torch.empty((sample_size, self.hidden_size), dtype=torch.float32)
 
 
         cursor = 0
@@ -964,7 +964,7 @@ class MyFaiss():
 
 
 
-    def init_index(self, hidden_size, N):
+    def init_index(self, N):
         if self.faiss_index_name == 'IndexHNSWFlat':
             LOGGER.info(f"USING IndexHNSWFlat index")
             assert self.use_cuda, f'It is better to use_cuda when index is IndexHNSWFlat'
@@ -975,13 +975,13 @@ class MyFaiss():
 
             num_clusters = int(math.sqrt(N) * 2 )
             num_bytes = 32 # num bytes per vector in PQ
-            quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
+            quantizer = faiss.IndexHNSWFlat(self.hidden_size, 32)
             quantizer.hnsw.efConstruction = 200
             quantizer.hnsw.efSearch = 256
-            index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_bytes, 8)
+            index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, self.hidden_size, num_clusters, num_bytes, 8)
             index.useFloat16LookupTables = self.use_amp
             self.faiss_index = index
-            self.train_samples()
+            self.train_samples(N)
             # samples_embeds = self.get_samples_embeds(N, self.hidden_size)
             # self.train_ivf_clusters(num_clusters, samples_embeds)
 
@@ -1006,10 +1006,9 @@ class MyFaiss():
     def build_faiss(self, batch_size):
         N = self.tokens_paths.dict_shape[0]
         self.dictionary_entries_n  = N
-        hidden_size = self.hidden_size
 
         if self.faiss_index is None:
-            self.init_index(hidden_size, N)
+            self.init_index(N)
         assert self.faiss_index is not None
 
 
