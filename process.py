@@ -835,7 +835,7 @@ class MyFaiss():
 
         #boolean mask to see which dictionary cuis has semantics
         dictionary_idxs_has_semantics = [i for i, cui in enumerate(dictionary_cuis) if cui in cui_to_semantics]
-        self.encoder.eval()
+        self.encoder.encoder.eval()
         batch_size = 4096
         M  = len(dictionary_idxs_has_semantics)
 
@@ -1190,19 +1190,3 @@ if __name__ == "__main__":
 
 
 
-
-
-
-
-# File "/workspace/reramker_test/process.py", line 1164, in train
-#     trainer = Trainer(logger, chkpointing, cfg)
-#               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/workspace/reramker_test/process.py", line 373, in __init__
-#     self.dataset = MyDataset(self.tokens_paths, cfg)
-#                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/workspace/reramker_test/process.py", line 597, in __init__
-#     self.query_semantics = np.load(self.tokens_paths.query_semantics)
-#                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   File "/workspace/reramker_test/myenv/lib/python3.12/site-packages/numpy/lib/npyio.py", line 462, in load
-#     raise ValueError("Cannot load file containing pickled data "
-# ValueError: Cannot load file containing pickled data when allow_pickle=False
