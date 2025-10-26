@@ -897,10 +897,8 @@ class MyFaiss():
         query_semantics = self.dataset.query_semantics
         dict_cuis = self.dataset.dict_cuis
         queries_cuis = self.dataset.query_cuis
-        unique_semantics = list(set(query_semantics))
         cui_to_semantic=  {cui: semantic for   cui, semantic in zip(queries_cuis, query_semantics)}
 
-        dictionary_idxs_has_semantics = [idx for idx, cui in enumerate(dict_cuis) if cui in cui_to_semantic]
 
         semantic_to_dict_idxs = defaultdict(list)
         for idx, cui in enumerate(dict_cuis):
@@ -910,7 +908,6 @@ class MyFaiss():
 
         total_cuis_with_semantics = sum(len(v) for v in semantic_to_dict_idxs.values())
 
-        num_semantics = len(semantic_to_dict_idxs)
         sample_indices = []
         for sem, idxs in semantic_to_dict_idxs.items():
             weight = len(idxs) / total_cuis_with_semantics
@@ -934,7 +931,7 @@ class MyFaiss():
         # sample_indices = torch.randperm(N)[:sample_size]
 
 
-        samples_batch_size = 16_000
+        samples_batch_size = 24_000
         samples_embeds = torch.empty((sample_size, self.hidden_size), dtype=torch.float32)
         cursor = 0
         for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed samples"):
