@@ -955,8 +955,16 @@ class MyFaiss():
         clustering.niter = 20
         clustering.max_points_per_centroid = 512
 
+        gpu_resources = faiss.StandardGpuResources()
+        LOGGER.info("Running FAISS GPU clustering ... this may take several minutes for large data.")
+        faiss.clustering_gpu(
+            gpu_resources,
+            samples_np,
+            clustering,
+            init_quantizer
+        )
         # --- Run clustering
-        clustering.train(samples_np, init_quantizer)
+        # clustering.train(samples_np, init_quantizer)
 
         # --- Attach the trained quantizer to FAISS index
         self.faiss_index.quantizer = init_quantizer
