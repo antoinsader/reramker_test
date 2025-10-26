@@ -22,7 +22,7 @@ from collections import defaultdict
 
 from transformers import AutoModel
 from config import CheckPointModel, FaissConfig, GlobalConfig, LoggerConfig, ModelConfig, TrainingConfig, parse_args, paths
-from utils import compute_metrics, compute_metrics_eval, get_labels, info_nce_loss, load_mmap_shape, marginal_nll, save_pkl
+from utils import compute_metrics, compute_metrics_eval, get_labels, get_pkl, info_nce_loss, load_mmap_shape, marginal_nll, save_pkl
 
 import config
 
@@ -594,7 +594,7 @@ class MyDataset(Dataset):
 
         self.dict_cuis  = np.load(self.tokens_paths.dict_cuis_path)
         self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
-        self.query_semantics = np.load(self.tokens_paths.query_semantics)
+        self.query_semantics = get_pkl(self.tokens_paths.query_semantics) 
         
         self.inject_hard_negatives = cfg.train.inject_hard_negatives
         self.hard_negatives_num = cfg.train.hard_negatives_num
@@ -1205,3 +1205,17 @@ if __name__ == "__main__":
 
 
 
+
+
+# File "/workspace/reramker_test/process.py", line 1164, in train
+#     trainer = Trainer(logger, chkpointing, cfg)
+#               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "/workspace/reramker_test/process.py", line 373, in __init__
+#     self.dataset = MyDataset(self.tokens_paths, cfg)
+#                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "/workspace/reramker_test/process.py", line 597, in __init__
+#     self.query_semantics = np.load(self.tokens_paths.query_semantics)
+#                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   File "/workspace/reramker_test/myenv/lib/python3.12/site-packages/numpy/lib/npyio.py", line 462, in load
+#     raise ValueError("Cannot load file containing pickled data "
+# ValueError: Cannot load file containing pickled data when allow_pickle=False
