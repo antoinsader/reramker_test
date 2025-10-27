@@ -122,9 +122,9 @@ def get_context(text, mention_start, mention_end, special_tokens_dict, window=5)
     # -------------------------
     final_tokens = (
         left_tokens
-        + special_tokens_dict['mention_in_sentence_start']
+        + [special_tokens_dict['mention_in_sentence_start']]
         + mention_tokens
-        + special_tokens_dict['mention_in_sentence_end']
+        + [special_tokens_dict['mention_in_sentence_end']]
         + right_tokens
     )
 
@@ -193,7 +193,7 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
     
 
     print(f"Building full queries")
-    full_queries = [buid_full_query(q, window_words, special_tokens_dict) for q in queries]
+    full_queries = [buid_full_query(q, window_words, special_tokens_dict) for q in tqdm(queries)]
     print(f"We have: {len(full_queries)} queries..")
     print(f"First 5 queries: {full_queries[:5]}")
 
