@@ -197,6 +197,17 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
     max_length = cfg.tokenize.queries_max_length
     batch_size = cfg.tokenize.tokenize_batch_size
 
+
+    special_tokens = {
+        'additional_special_tokens': [
+            '[mention_start]', '[mention_end]',  # existing
+            '[MENTION_NAME_S]', '[MENTION_NAME_E]',
+            '[CONTEXT_S]', '[CONTEXT_E]',
+            '[TYPE_S]', '[TYPE_E]'
+        ]
+    }
+    tokenizer.add_special_tokens(special_tokens)
+
     print(f"Building full queries")
     full_queries = preprocess_queries(queries, window_words)
     print(f"We have: {len(full_queries)} queries..")
