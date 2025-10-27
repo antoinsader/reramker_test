@@ -182,23 +182,6 @@ def buid_full_query(q, window_words, special_tokens_dict):
     )
 
 
-def preprocess_queries(queries, window_words, special_tokens_dict, n_workers=None):
-    n_workers = n_workers or max(1, os.cpu_count() - 2)
-
-    build_fn = partial(buid_full_query, window_words=window_words, special_tokens_dict=special_tokens_dict)
-
-    with Pool(n_workers) as p:
-        full_queries = list(
-            tqdm(
-                p.imap_unordered(build_fn, queries),
-                total=len(queries),
-                desc="Building queries",
-                dynamic_ncols=True
-            )
-        )
-
-    return full_queries
-
 
 def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
 
@@ -210,7 +193,7 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
     
 
     print(f"Building full queries")
-    full_queries = preprocess_queries(queries, window_words, special_tokens_dict)
+    full_queries = [buid_full_query(q, window_words, special_tokens_dict) for q in queries]
     print(f"We have: {len(full_queries)} queries..")
     print(f"First 5 queries: {full_queries[:5]}")
 
@@ -355,7 +338,7 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
 if __name__=="__main__":
     cfg = parse_args()
     set_start_method("spawn", force=True)
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name, use_fast=True)
     special_tokens = cfg.tokenize.special_tokens
     tokenizer.add_special_tokens(special_tokens)
     
