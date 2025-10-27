@@ -1006,13 +1006,16 @@ class MyFaiss():
             gpu_resources = faiss.StandardGpuResources()
             LOGGER.info(f"FAISS INDEX are being built and trained")
 
-            num_clusters = int(math.sqrt(N) * 2 )
-            num_bytes = 32 # num bytes per vector in PQ
+            num_clusters = self.cfg.num_clusters(N) # if N is 4m then around 4000
+            num_quantizers = self.cfg.num_quantizers
+            nbits= self.cfg.nbits # bits per sub quantizer
             quantizer = faiss.IndexHNSWFlat(self.hidden_size, 32)
-            quantizer.hnsw.efConstruction = 200
-            quantizer.hnsw.efSearch = 256
-            index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, self.hidden_size, num_clusters, num_bytes, 8)
+            quantizer.hnsw.efConstruction = self.cfg.hnsw_efConstruction
+            quantizer.hnsw.efSearch = self.cfg.hnsw_efSearch
+            index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, self.hidden_size, num_clusters, num_quantizers, nbits)
             index.useFloat16LookupTables = self.use_amp
+            index.nprobe = self.cfg.nrprobe
+            
             self.faiss_index = index
             self.train_samples(N)
             # samples_embeds = self.get_samples_embeds(N, self.hidden_size)

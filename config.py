@@ -1,5 +1,6 @@
 import argparse
 from dataclasses import dataclass, field
+import math
 import os
 
 
@@ -90,7 +91,9 @@ class PathsConfig:
 
 @dataclass
 class TokensConfig:
-    max_length:int = 25
+    dictionary_max_length = 25
+    queries_max_length = 80
+    tokenize_batch_size : int = 8000
     raw_test_dir:str = None
     test_split_from_train: bool = True
     test_split_percentage: float = 0.8
@@ -98,6 +101,9 @@ class TokensConfig:
     skip_tokenize_dictionary: bool = False
     skip_tokenize_queries: bool = False
 
+
+    query_tokens_window_words_in_text = 5 #5 words before mention start, 5 words after mention start
+    
     
 
 
@@ -146,6 +152,16 @@ class FaissConfig:
     build_batch_size: int = 4096
     search_batch_size: int = 4096
     index_name: str = "IndexHNSWFlat"
+    num_quantizers = 32
+    nbits= 8
+    hnsw_efConstruction = 200
+    hnsw_efSearch = 256
+    nrprobe = 32
+
+    def num_clusters(self, dictionary_size):
+        return int(math.sqrt(dictionary_size) * 2)
+
+
 
 
 @dataclass

@@ -26,10 +26,12 @@ def load_queries(data_dir, filter_composite=True, filter_duplicate=True, filter_
 
         for concept in concepts:
             concept = concept.split("||")
+            document_number = concept[0]
+            mention_start_idx, mention_end_idx = concept[1].split("|")
+            mention_start_idx, mention_end_idx = int(mention_start_idx), int(mention_end_idx)
+            semantic_type = concept[2].strip()
             mention = concept[3].strip()
             cui = concept[4].strip()
-            semantic_type = concept[2].strip()
-            
             is_composite = (cui.replace("+","|").count("|") > 0)
 
             # filter composite cui
@@ -39,7 +41,14 @@ def load_queries(data_dir, filter_composite=True, filter_duplicate=True, filter_
             if filter_cuiless and cui == '-1':
                 continue
 
-            data.append((mention,cui, semantic_type))
+            txt_path = f"{data_dir}/{document_number}.txt"
+            if not os.path.exists(txt_path):
+                print(f"{txt_path} does not exists")
+                continue
+            with open(txt_path, "r", encoding="utf-8") as f:
+                full_text = f.read()
+
+            data.append((mention,cui, semantic_type, mention_start_idx, mention_end_idx, full_text))
     if filter_duplicate:
         data = list(dict.fromkeys(data))
     data = np.array(data)
