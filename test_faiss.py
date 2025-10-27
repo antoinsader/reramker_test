@@ -22,7 +22,7 @@ device = "cuda"
 
 
 
-tokens_paths = TokensPaths("dict", "test")
+tokens_paths = TokensPaths("dict", "train")
 dataset = MyDataset(tokens_paths, cfg)
 encoder = MyEncoder(use_cuda, cfg.model)
 
