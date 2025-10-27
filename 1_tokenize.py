@@ -279,7 +279,7 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
 
     for start in tqdm(range(0, names_size, batch_size), desc=f"Tokenizing"):
         end = min(start+batch_size, names_size)
-        batch_texts = names[start:end]
+        batch_texts = names[start:end].tolist()
         enc = tokenizer(
             batch_texts,
             padding="max_length",
