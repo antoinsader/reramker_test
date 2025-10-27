@@ -92,9 +92,9 @@ class PathsConfig:
 
 @dataclass
 class TokensConfig:
-    dictionary_max_length = 25
+    dictionary_max_length = 64
     queries_max_length = 80
-    tokenize_batch_size : int = 8000
+    tokenize_batch_size : int = 16000
     raw_test_dir:str = None
     test_split_from_train: bool = True
     test_split_percentage: float = 0.8
