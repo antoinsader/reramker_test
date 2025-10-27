@@ -613,7 +613,6 @@ class TokensPaths():
         self.query_inp_path = paths[query_paths_key]['inp']
         self.query_att_path = paths[query_paths_key]['att']
         self.query_cuis_path = paths[query_paths_key]['ids']
-        self.query_semantics = paths[query_paths_key]['semantics_pkl']
         self.query_shape = load_mmap_shape(paths[query_paths_key]['meta'])
 
 class MyDataset(Dataset):
