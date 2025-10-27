@@ -20,9 +20,9 @@ cfg = GlobalConfig()
 use_cuda = True
 device = "cuda"
 
+print("INIT INDEX")
 
-
-tokens_paths = TokensPaths("dict", "train")
+tokens_paths = TokensPaths("dict", "queries")
 dataset = MyDataset(tokens_paths, cfg)
 encoder = MyEncoder(use_cuda, cfg.model)
 
@@ -49,6 +49,8 @@ index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters,
 index.useFloat16LookupTables = use_amp
 index.nprobe = cfg.faiss.nrprobe
 faiss_index = index
+print("INIT INDEX FINISHED")
+print("INIT SAMPLES....")
 
 
 sample_size= faiss_cluster_samples_num
