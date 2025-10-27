@@ -175,9 +175,17 @@ def buid_full_query(q, window_words):
 
 def preprocess_queries(queries, window_words, n_workers=None):
     n_workers = n_workers or max(1, os.cpu_count() -2)
+
+
+    args = [(q, window_words) for q in queries]
     with Pool(n_workers) as p:
         full_queries = list(
-            p.starmap(buid_full_query, [(q, window_words) for q in queries])
+            tqdm(
+                p.imap_unordered(buid_full_query, args),
+                total=len(args),
+                desc="Building queries",
+                dynamic_ncols=True
+            )
         )
     return full_queries
 
@@ -306,15 +314,6 @@ if __name__=="__main__":
         print(f"Reading queries...")
         train_queries = load_queries(cfg.paths.queries_raw_dir)
         tokenize_queries(train_queries, tokenizer, paths["queries"], cfg)
-
-
-
-    # test_queries = load_queries(test_queries_dir)
-    # test_names, test_cuis = [row[0] for row in test_queries], [row[1] for row in test_queries]
-    # test_cuis = [d.replace("MESH:", "") for d in test_cuis]
-    # tt(test_cuis, test_names, 'test', tokenizer, cfg)
-
-
 
 
 
