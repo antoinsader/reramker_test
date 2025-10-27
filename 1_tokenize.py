@@ -203,6 +203,7 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
     print(f"First 5 queries: {full_queries[:5]}")
 
     queries_cuis = [q[1] for q in queries]
+    queries_cuis = [q.replace("MESH:", "") for q in queries_cuis]
     np.save(queries_paths["ids"], queries_cuis)
     N = len(queries_cuis)
 
@@ -247,7 +248,7 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
 
 
 def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, semantics=None ):
-    max_length = cfg.tokenize.max_length
+    max_length = cfg.tokenize.dictionary_max_length
     batch_size = cfg.tokenize.tokenize_batch_size
 
     print("Saving cuis..")
@@ -305,8 +306,8 @@ if __name__=="__main__":
     if not cfg.tokenize.skip_tokenize_dictionary:
         print(f"Reading dictionary...")
         train_dictionary=load_dictionary(cfg.paths.dictionary_raw_path)
-        dictionary_names, dictionary_cuis = [row[0] for row in train_dictionary], [row[1] for row in train_dictionary]
-        dictionary_cuis = [d.replace("MESH:", "") for d in dictionary_cuis]
+        dictionary_names = train_dictionary[:, 0]
+        dictionary_cuis  = np.char.replace(train_dictionary[:, 1], "MESH:", "")
         tokenize_dictionary(cuis=dictionary_cuis,names= dictionary_names ,  paths_key="dict", tokenizer = tokenizer, cfg=cfg)
 
 
