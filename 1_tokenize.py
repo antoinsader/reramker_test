@@ -9,6 +9,8 @@ from functools import partial
 from transformers import AutoTokenizer
 import re
 
+from functools import partial
+
 from config import paths
 from config import GlobalConfig
 from data import load_dictionary, load_queries
@@ -173,20 +175,22 @@ def buid_full_query(q, window_words):
         f" [TYPE_S] {semantic_type} [TYPE_E] "
     )
 
+
 def preprocess_queries(queries, window_words, n_workers=None):
-    n_workers = n_workers or max(1, os.cpu_count() -2)
+    n_workers = n_workers or max(1, os.cpu_count() - 2)
 
+    build_fn = partial(buid_full_query, window_words=window_words)
 
-    args = [(q, window_words) for q in queries]
     with Pool(n_workers) as p:
         full_queries = list(
             tqdm(
-                p.imap_unordered(buid_full_query, args),
-                total=len(args),
+                p.imap_unordered(build_fn, queries),
+                total=len(queries),
                 desc="Building queries",
                 dynamic_ncols=True
             )
         )
+
     return full_queries
 
 
