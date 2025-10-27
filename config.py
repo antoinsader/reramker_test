@@ -65,6 +65,7 @@ class PathsConfig:
     
     dictionary_raw_path = "./data/raw/train_dictionary.txt"
     queries_raw_dir = "./data/raw/traindev"
+    tokenizer_meta_path = "./data/tokenizer.json"
 
     result_encoder_dir = None
     checkpoint_dir = None
@@ -103,8 +104,26 @@ class TokensConfig:
 
 
     query_tokens_window_words_in_text = 5 #5 words before mention start, 5 words after mention start
-    
-    
+
+    special_tokens = {
+        'additional_special_tokens': [
+            '[MENTION_CONTEXT_START]', '[MENTION_CONTEXT_END]',  # existing
+            '[MENTION_NAME_START]', '[MENTION_NAME_END]',
+            '[CONTEXT_START]', '[CONTEXT_END]',
+            '[TYPE_START]', '[TYPE_END]'
+        ]
+    }
+    special_tokens_dict = {
+        "mention_name_start": "[MENTION_NAME_START]",
+        "mention_name_end": "[MENTION_NAME_END]",
+        "mention_in_sentence_start": "[MENTION_CONTEXT_START]",
+        "mention_in_sentence_end": "[MENTION_CONTEXT_END]",
+        "context_start": "[CONTEXT_START]",
+        "context_end": "[CONTEXT_END]",
+        "type_start": "[TYPE_START]",
+        "type_end": "[TYPE_END]",
+        
+    }
 
 
 

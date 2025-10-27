@@ -27,7 +27,7 @@ def tokenize_fn(batch, tokenizer, max_length):
 
 
 
-def get_context(text, mention_start, mention_end, window=5):
+def get_context(text, mention_start, mention_end, special_tokens_dict, window=5):
     """
     Steps:
     1. Extract a region around the mention, bounded by nearest ',' or '.' on each side.
@@ -119,9 +119,9 @@ def get_context(text, mention_start, mention_end, window=5):
     # -------------------------
     final_tokens = (
         left_tokens
-        + ["[mention_start]"]
+        + special_tokens_dict['mention_in_sentence_start']
         + mention_tokens
-        + ["[mention_end]"]
+        + special_tokens_dict['mention_in_sentence_end']
         + right_tokens
     )
 
@@ -166,20 +166,20 @@ def parse_args():
     return cfg
 
 
-def buid_full_query(q, window_words):
+def buid_full_query(q, window_words, special_tokens_dict):
     mention, cui, semantic_type, start, end, text = q
-    ctx = get_context(text, int(start), int(end), window=window_words)
+    ctx = get_context(text, int(start), int(end), special_tokens_dict=special_tokens_dict,  window=window_words)
     return (
-        f" [MENTION_NAME_S] {mention} [MENTION_NAME_E] "
-        f" [CONTEXT_S] {ctx} [CONTEXT_E] "
-        f" [TYPE_S] {semantic_type} [TYPE_E] "
+        f" {special_tokens_dict['mention_name_start']} {mention} {special_tokens_dict['mention_name_end']} "
+        f" {special_tokens_dict['context_start']} {ctx} {special_tokens_dict['context_end']} "
+        f" {special_tokens_dict['type_start']} {semantic_type} {special_tokens_dict['type_end']} "
     )
 
 
-def preprocess_queries(queries, window_words, n_workers=None):
+def preprocess_queries(queries, window_words, special_tokens_dict, n_workers=None):
     n_workers = n_workers or max(1, os.cpu_count() - 2)
 
-    build_fn = partial(buid_full_query, window_words=window_words)
+    build_fn = partial(buid_full_query, window_words=window_words, special_tokens_dict=special_tokens_dict)
 
     with Pool(n_workers) as p:
         full_queries = list(
@@ -200,20 +200,11 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
     window_words = cfg.tokenize.query_tokens_window_words_in_text
     max_length = cfg.tokenize.queries_max_length
     batch_size = cfg.tokenize.tokenize_batch_size
-
-
-    special_tokens = {
-        'additional_special_tokens': [
-            '[mention_start]', '[mention_end]',  # existing
-            '[MENTION_NAME_S]', '[MENTION_NAME_E]',
-            '[CONTEXT_S]', '[CONTEXT_E]',
-            '[TYPE_S]', '[TYPE_E]'
-        ]
-    }
-    tokenizer.add_special_tokens(special_tokens)
+    special_tokens_dict = cfg.tokenize.special_tokens_dict
+    
 
     print(f"Building full queries")
-    full_queries = preprocess_queries(queries, window_words)
+    full_queries = preprocess_queries(queries, window_words, special_tokens_dict)
     print(f"We have: {len(full_queries)} queries..")
     print(f"First 5 queries: {full_queries[:5]}")
 
@@ -265,6 +256,8 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
 def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, semantics=None ):
     max_length = cfg.tokenize.dictionary_max_length
     batch_size = cfg.tokenize.tokenize_batch_size
+    special_tokens_dict=  cfg.tokenize.special_tokens_dict
+
 
     print("Saving cuis..")
     np.save(paths[paths_key]['ids'] , cuis)
@@ -295,6 +288,7 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
     for start in tqdm(range(0, names_size, batch_size), desc=f"Tokenizing"):
         end = min(start+batch_size, names_size)
         batch_texts = names[start:end].tolist()
+        batch_texts = [f"{special_tokens_dict['mention_name_start']} {n} {special_tokens_dict['mention_name_end']} " for n in batch_texts]
         enc = tokenizer(
             batch_texts,
             padding="max_length",
@@ -317,6 +311,14 @@ if __name__=="__main__":
     cfg = parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name)
+    special_tokens = cfg.tokenize.special_tokens
+    tokenizer.add_special_tokens(special_tokens)
+    
+    meta = {"len_tokenizer": len(tokenizer)}
+    with open(cfg.paths.tokenizer_meta_path, "w") as f:
+        json.dump(meta, f)
+
+
 
     if not cfg.tokenize.skip_tokenize_dictionary:
         print(f"Reading dictionary...")

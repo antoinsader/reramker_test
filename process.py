@@ -167,14 +167,25 @@ class MyLogger:
 # MY ENCODER
 # ====================
 class MyEncoder():
-    def __init__(self, use_cuda, cfg:ModelConfig):
-        self.cfg = cfg
+    def __init__(self, use_cuda, cfg:GlobalConfig):
+        self.cfg = cfg.model
         self.use_cuda = use_cuda
 
-        encoder = AutoModel.from_pretrained(cfg.model_name, use_safetensors=True)
+        encoder = AutoModel.from_pretrained(self.cfg.model_name, use_safetensors=True)
+
+        tokenizer_meta_path  = cfg.paths.tokenizer_meta_path
+        with open(tokenizer_meta_path) as f:
+            tokenizer_meta = json.load(f)
+        tokenizer_len = tokenizer_meta['len_tokenizer']
+        encoder.resize_token_embeddings(tokenizer_len)
+
+
         self.device = "cuda" if use_cuda else "cpu"
         self.encoder = encoder.to(self.device)
-        cfg.hidden_size = self.encoder.config.hidden_size
+        self.cfg.hidden_size = self.encoder.config.hidden_size
+
+        
+
 
     def get_emb(self, input_ids_tensor, attention_mask_tensor, use_amp=False, use_no_grad=False):
         context = torch.inference_mode() if use_no_grad else torch.enable_grad()
@@ -400,7 +411,7 @@ class Trainer:
         self.use_cuda = torch.cuda.is_available()
         self.device = "cuda"    if self.use_cuda else "cpu"
         self.scaler = torch.amp.GradScaler(enabled=cfg.train.use_amp)
-        self.encoder = MyEncoder(self.use_cuda, cfg.model)
+        self.encoder = MyEncoder(self.use_cuda, cfg)
         self.model = MyModel(self.use_cuda, self.encoder, self.cfg)
         self.dataset = MyDataset(self.tokens_paths, cfg)
         self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device, self.dataset)
@@ -1002,10 +1013,10 @@ class MyFaiss():
                 index_conf.useFloat16 = bool(self.use_cuda)
 
                 #make the index (this index is on gpu)
-                self.faiss_index = faiss.GpuIndexFlatIP(gpu_resources, hidden_size, index_conf)
+                self.faiss_index = faiss.GpuIndexFlatIP(gpu_resources, self.hidden_size, index_conf)
             else:
                 #make normal cpu index 
-                self.faiss_index = faiss.IndexFlatIP(hidden_size)
+                self.faiss_index = faiss.IndexFlatIP(self.hidden_size)
             return True
 
 
@@ -1094,7 +1105,7 @@ class Evaluater:
         self.use_cuda = torch.cuda.is_available()
         self.device = "cuda" if self.use_cuda else "cpu"
         self.dataset = MyDataset(self.tokens_paths, cfg )
-        self.encoder = MyEncoder(self.use_cuda, cfg.model)
+        self.encoder = MyEncoder(self.use_cuda, cfg)
         self.faiss = MyFaiss(cfg, self.tokens_paths, self.encoder, self.faiss_path, self.use_cuda, self.device, self.dataset)
         self.model = MyModel(self.use_cuda, self.encoder, cfg)
         self.faiss.load_faiss_index(self.faiss_path)
