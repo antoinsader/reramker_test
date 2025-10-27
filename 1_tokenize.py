@@ -1,6 +1,7 @@
 import argparse
-from multiprocessing import Pool
+from multiprocessing import Pool, set_start_method
 import os
+import random
 import numpy as np
 from tqdm import tqdm
 import json
@@ -15,6 +16,8 @@ from config import paths
 from config import GlobalConfig
 from data import load_dictionary, load_queries
 from utils import save_pkl
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def tokenize_fn(batch, tokenizer, max_length):
     return tokenizer(
@@ -138,7 +141,8 @@ def parse_args():
     parser.add_argument('--dictionary_path',  type=str)
     parser.add_argument('--queries_dir',  type=str)
     
-    parser.add_argument('--max_length',  type=int)
+    parser.add_argument('--dictionary_max_length',  type=int)
+    parser.add_argument('--queries_max_length',  type=int)
 
     parser.add_argument('--skip_tokenizing_dictionary',  action="store_true")
     parser.add_argument('--skip_tokenizing_queries',  action="store_true")
@@ -159,9 +163,11 @@ def parse_args():
         assert os.path.isdir(args.queries_dir), f'Queries dir: {args.queries_dir} not exists'
         cfg.paths.queries_raw_dir = args.queries_dir
 
-    if args.max_length:
-        cfg.tokenize.max_length = args.max_length
+    if args.queries_max_length:
+        cfg.tokenize.queries_max_length = args.queries_max_length
 
+    if args.dictionary_max_length:
+        cfg.tokenize.dictionary_max_length = args.dictionary_max_length
 
     return cfg
 
@@ -249,6 +255,25 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
     input_ids_mmap.flush()
     att_mask_mmap.flush()
 
+    lengths = []
+
+    for q in tqdm(full_queries, desc="Measuring token lengths"):
+        encoded = tokenizer(
+            q,
+            add_special_tokens=True,   # includes [CLS] and [SEP]
+            truncation=False           # we want true length, not truncated
+        )
+        lengths.append(len(encoded["input_ids"]))
+
+    lengths = np.array(lengths)
+
+    print(f"Total queries: {len(lengths)}")
+    print(f"Mean length: {np.mean(lengths):.1f}")
+    print(f"Median length: {np.median(lengths)}")
+    print(f"95th percentile: {np.percentile(lengths, 95)}")
+    print(f"99th percentile: {np.percentile(lengths, 99)}")
+    print(f"Max length: {np.max(lengths)}")
+
     return True
 
 
@@ -303,13 +328,33 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
     input_ids_mmap.flush()
     att_mask_mmap.flush()
     print("tokenized")
+        
+    # names is your np.array or list of dictionary names
+    sample_size = min(200000, len(names))
+    sample_indices = random.sample(range(len(names)), sample_size)
+    sample_texts = [names[i] for i in sample_indices]
+
+    print(f"Sampling {len(sample_texts)} out of {len(names)} dictionary entries")
+    # tokenize in batches for speed
+    batch_size = 16000
+    lengths = []
+
+    for start in tqdm(range(0, len(sample_texts), batch_size), desc="Measuring lengths"):
+        end = min(start + batch_size, len(sample_texts))
+        batch = [f"{special_tokens_dict['mention_name_start']} {t} {special_tokens_dict['mention_name_end']}" 
+                for t in sample_texts[start:end]]
+        enc = tokenizer(batch, add_special_tokens=True, truncation=False)
+        lengths.extend([len(x) for x in enc["input_ids"]])
+
+    lengths = np.array(lengths)
+    print(f"Mean={np.mean(lengths):.1f}, Median={np.median(lengths)}, 95th={np.percentile(lengths,95)}, Max={np.max(lengths)}")
     return True
 
 
 
 if __name__=="__main__":
     cfg = parse_args()
-
+    set_start_method("spawn", force=True)
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name)
     special_tokens = cfg.tokenize.special_tokens
     tokenizer.add_special_tokens(special_tokens)
@@ -332,6 +377,5 @@ if __name__=="__main__":
         print(f"Reading queries...")
         train_queries = load_queries(cfg.paths.queries_raw_dir)
         tokenize_queries(train_queries, tokenizer, paths["queries"], cfg)
-
 
 
