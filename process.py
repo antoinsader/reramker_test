@@ -625,7 +625,6 @@ class MyDataset(Dataset):
 
         self.dict_cuis  = np.load(self.tokens_paths.dict_cuis_path)
         self.query_cuis  = np.load(self.tokens_paths.query_cuis_path)
-        self.query_semantics = get_pkl(self.tokens_paths.query_semantics)
 
         self.inject_hard_negatives = cfg.train.inject_hard_negatives
         self.hard_negatives_num = cfg.train.hard_negatives_num
@@ -832,7 +831,6 @@ class MyFaiss():
         
         dictionary_cuis = self.dataset.dict_cuis
         queries_cuis = self.dataset.query_cuis
-        queries_semantics = self.dataset.query_semantics
 
 
         cui_to_semantics = {cui: semantic_type for cui, semantic_type in zip(queries_cuis, queries_semantics)}
@@ -892,34 +890,7 @@ class MyFaiss():
         dictionary_inputs =   self.dataset.dictionary_inputs
         dictionary_att = self.dataset.dictionary_att
         
-        
-        query_semantics = self.dataset.query_semantics
-        dict_cuis = self.dataset.dict_cuis
-        queries_cuis = self.dataset.query_cuis
-        cui_to_semantic=  {cui: semantic for   cui, semantic in zip(queries_cuis, query_semantics)}
-
-
-        semantic_to_dict_idxs = defaultdict(list)
-        for idx, cui in enumerate(dict_cuis):
-            if cui in cui_to_semantic:
-                sem = cui_to_semantic[cui]
-                semantic_to_dict_idxs[sem].append(idx)
-
-        total_cuis_with_semantics = sum(len(v) for v in semantic_to_dict_idxs.values())
-
-        sample_indices = []
-        for sem, idxs in semantic_to_dict_idxs.items():
-            weight = len(idxs) / total_cuis_with_semantics
-            n_to_sample = max(1, int(weight * sample_size))
-            chosen = random.sample(idxs, min(n_to_sample, len(idxs)))
-            sample_indices.extend(chosen)
-
-        if len(sample_indices) < sample_size:
-            remaining = list(set(range(N)) - set(sample_indices))
-            needed = sample_size - len(sample_indices)
-            sample_indices.extend(random.sample(remaining, min(needed, len(remaining))))
-
-        sample_indices = torch.tensor(sample_indices)
+        sample_indices = torch.randperm(N)[:sample_size] 
         print(f"Num of samples: {sample_indices.shape}")
 
 
