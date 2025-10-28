@@ -134,4 +134,4 @@ def fine_tune_embeddings(cfg: GlobalConfig, num_epochs=3, lr=3e-5, batch_size=12
 
 if __name__ == "__main__":
     cfg = GlobalConfig()
-    fine_tune_embeddings(cfg, num_epochs=3, lr=2e-5, batch_size=128)
+    fine_tune_embeddings(cfg, num_epochs=3, lr=2e-5, batch_size=512)
