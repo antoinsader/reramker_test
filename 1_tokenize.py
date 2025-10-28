@@ -321,7 +321,7 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig,  cu
 
     for start in tqdm(range(0, len(sample_texts), batch_size), desc="Measuring lengths"):
         end = min(start + batch_size, len(sample_texts))
-        batch_texts = sample_texts[start:end].tolist()
+        batch_texts = sample_texts[start:end]
         batch_cuis = sample_cuis[start:end]
         batch_texts = [
             f"{special_tokens_dict['mention_name_start']} {n} {special_tokens_dict['mention_name_end']} "

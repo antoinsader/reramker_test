@@ -21,7 +21,7 @@ def fine_tune_embeddings(cfg: GlobalConfig, num_epochs=3, lr=3e-5, batch_size=12
     # -----------------------
     # Load dataset
     # -----------------------
-    tokens_paths = TokensPaths("dict", "queries")
+    tokens_paths = TokensPaths("small_dict", "queries")
     dataset = MyDataset(tokens_paths, cfg)
     dict_cuis = dataset.dict_cuis
     query_cuis = dataset.query_cuis
