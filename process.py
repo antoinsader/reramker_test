@@ -849,7 +849,7 @@ class MyFaiss():
         # sample_indices = torch.randperm(N)[:sample_size]
 
 
-        samples_batch_size = 8_000
+        samples_batch_size = 4_000
         samples_embeds = torch.empty((sample_size, self.hidden_size), dtype=torch.float32)
         cursor = 0
         for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed samples"):
