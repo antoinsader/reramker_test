@@ -39,3 +39,4 @@ pip install datasets
 echo "Setup complete!"
 
 
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

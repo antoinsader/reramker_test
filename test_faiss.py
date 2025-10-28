@@ -14,13 +14,16 @@ from config import GlobalConfig, paths
 from process import MyDataset, MyEncoder, TokensPaths
 from utils import get_pkl, save_pkl
 
+
+
+
+
 cfg = GlobalConfig()
 
 
 use_cuda = True
 device = "cuda"
 
-print("INIT INDEX")
 
 tokens_paths = TokensPaths("dict", "queries")
 dataset = MyDataset(tokens_paths, cfg)
@@ -32,24 +35,9 @@ use_amp = cfg.train.use_amp
 topk = cfg.train.topk
 hidden_size = cfg.model.hidden_size
 
-num_threads = min(32, os.cpu_count() or 8)
-faiss.omp_set_num_threads(num_threads)
-
 N = tokens_paths.dict_shape[0]
 dictionary_entries_n  = N
 
-gpu_resources = faiss.StandardGpuResources()
-num_clusters = cfg.faiss.num_clusters(N) # if N is 4m then around 4000
-num_quantizers = cfg.faiss.num_quantizers
-nbits= cfg.faiss.nbits # bits per sub quantizer
-quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
-quantizer.hnsw.efConstruction = cfg.faiss.hnsw_efConstruction
-quantizer.hnsw.efSearch = cfg.faiss.hnsw_efSearch
-index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_quantizers, nbits)
-index.useFloat16LookupTables = use_amp
-index.nprobe = cfg.faiss.nrprobe
-faiss_index = index
-print("INIT INDEX FINISHED")
 print("INIT SAMPLES....")
 
 
@@ -67,7 +55,7 @@ if sample_size > N:
     sample_size = N
 sample_indices = torch.randperm(N)[:sample_size] 
 
-samples_batch_size = 16_000
+samples_batch_size = 8_000
 samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
 cursor = 0
 
@@ -94,6 +82,25 @@ else:
 
     save_pkl(samples_embeds, samples_path)
 
+
+
+print("INIT INDEX")
+num_threads = min(32, os.cpu_count() or 8)
+faiss.omp_set_num_threads(num_threads)
+
+
+gpu_resources = faiss.StandardGpuResources()
+num_clusters = cfg.faiss.num_clusters(N) # if N is 4m then around 4000
+num_quantizers = cfg.faiss.num_quantizers
+nbits= cfg.faiss.nbits # bits per sub quantizer
+quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
+quantizer.hnsw.efConstruction = cfg.faiss.hnsw_efConstruction
+quantizer.hnsw.efSearch = cfg.faiss.hnsw_efSearch
+index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_quantizers, nbits)
+index.useFloat16LookupTables = use_amp
+index.nprobe = cfg.faiss.nrprobe
+faiss_index = index
+print("INIT INDEX FINISHED")
 
 print(f"Training on samples...")
 faiss_index.train(samples_embeds)
