@@ -21,8 +21,15 @@ paths = {
         "att": os.path.join(tokens_dir, "_d_att.mmap") ,
         "ids":  os.path.join(tokens_dir, "_d_ids.npy") ,
         "meta":  os.path.join(tokens_dir, "_d_meta.json")
-        
     },
+    
+    "small_dict": {
+        "inp": os.path.join(tokens_dir, "_small_d_inp.mmap"),
+        "att": os.path.join(tokens_dir, "_small_d_att.mmap") ,
+        "ids":  os.path.join(tokens_dir, "_small_d_ids.npy") ,
+        "meta":  os.path.join(tokens_dir, "_small_d_meta.json")
+    },
+    
     "test": {
         "inp": os.path.join(tokens_dir, "_t_inp.mmap"),
         "att": os.path.join(tokens_dir, "_t_att.mmap") ,
@@ -92,8 +99,8 @@ class PathsConfig:
 
 @dataclass
 class TokensConfig:
-    dictionary_max_length = 64
-    queries_max_length = 80
+    dictionary_max_length = 120
+    queries_max_length = 120
     tokenize_batch_size : int = 128_000
     raw_test_dir:str = None
     test_split_from_train: bool = True
@@ -103,7 +110,7 @@ class TokensConfig:
     skip_tokenize_queries: bool = False
 
 
-    query_tokens_window_words_in_text = 5 #5 words before mention start, 5 words after mention start
+    query_tokens_window_words_in_text = 10 #5 words before mention start, 5 words after mention start
 
     special_tokens = {
         'additional_special_tokens': [

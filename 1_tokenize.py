@@ -175,6 +175,7 @@ def buid_full_query(q, window_words, special_tokens_dict):
 
 
 
+
 def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
 
 
@@ -182,7 +183,6 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
     max_length = cfg.tokenize.queries_max_length
     batch_size = cfg.tokenize.tokenize_batch_size
     special_tokens_dict = cfg.tokenize.special_tokens_dict
-    
 
     print(f"Building full queries")
     full_queries = [buid_full_query(q, window_words, special_tokens_dict) for q in tqdm(queries)]
@@ -221,7 +221,6 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
 
     for start in tqdm(range(0, N, batch_size), desc=f"Tokenizing"):
         end = min(start+batch_size, N)
-
         enc = tokenized[start:end]
         input_ids_mmap[start:end] = np.asarray(enc["input_ids"], np.int32)
         att_mask_mmap[start:end] = np.asarray(enc["attention_mask"], np.int32)
@@ -253,19 +252,19 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
 
 
 
-def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, semantics=None ):
+def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig,  cui_to_semantic=None ):
     max_length = cfg.tokenize.dictionary_max_length
     batch_size = cfg.tokenize.tokenize_batch_size
     special_tokens_dict=  cfg.tokenize.special_tokens_dict
 
+    if cui_to_semantic is None:
+        cui_to_semantic = {}
+        
 
     print("Saving cuis..")
     np.save(paths[paths_key]['ids'] , cuis)
     names_size = len(names)
     
-    if semantics:
-        save_pkl(semantics, paths[paths_key]['semantics_pkl'])
-
     print(f"Creating memmap...")
     input_ids_mmap = np.memmap(
         paths[paths_key]['inp'],
@@ -288,11 +287,12 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
     for start in tqdm(range(0, names_size, batch_size), desc=f"Tokenizing"):
         end = min(start+batch_size, names_size)
         batch_texts = names[start:end].tolist()
+        batch_cuis = cuis[start:end]
         batch_texts = [
             f"{special_tokens_dict['mention_name_start']} {n} {special_tokens_dict['mention_name_end']} "
-            f"{special_tokens_dict['context_start']} none {special_tokens_dict['context_end']} "
-            f"{special_tokens_dict['type_start']} unknown {special_tokens_dict['type_end']}"
-            for n in batch_texts
+            f"{special_tokens_dict['context_start']} the name is {special_tokens_dict['mention_in_sentence_start']} {n} {special_tokens_dict['mention_in_sentence_end']} which is showing  {special_tokens_dict['context_end']} "
+            f"{special_tokens_dict['type_start']} {cui_to_semantic.get(batch_cuis[idx], "NONE")} {special_tokens_dict['type_end']}"
+            for idx,n in enumerate(batch_texts)
         ]
         enc = tokenizer(
             batch_texts,
@@ -312,6 +312,7 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
     sample_size = min(750_000, len(names))
     sample_indices = random.sample(range(len(names)), sample_size)
     sample_texts = [names[i] for i in sample_indices]
+    sample_cuis = [cuis[i] for i in sample_indices]
 
     print(f"Sampling {len(sample_texts)} out of {len(names)} dictionary entries")
     # tokenize in batches for speed
@@ -320,9 +321,15 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
 
     for start in tqdm(range(0, len(sample_texts), batch_size), desc="Measuring lengths"):
         end = min(start + batch_size, len(sample_texts))
-        batch = [f"{special_tokens_dict['mention_name_start']} {t} {special_tokens_dict['mention_name_end']}" 
-                for t in sample_texts[start:end]]
-        enc = tokenizer(batch, add_special_tokens=True, truncation=False)
+        batch_texts = sample_texts[start:end].tolist()
+        batch_cuis = sample_cuis[start:end]
+        batch_texts = [
+            f"{special_tokens_dict['mention_name_start']} {n} {special_tokens_dict['mention_name_end']} "
+            f"{special_tokens_dict['context_start']} the name is {special_tokens_dict['mention_in_sentence_start']} {n} {special_tokens_dict['mention_in_sentence_end']} which is showing  {special_tokens_dict['context_end']} "
+            f"{special_tokens_dict['type_start']} {cui_to_semantic.get(batch_cuis[idx], "NONE")} {special_tokens_dict['type_end']}"
+            for idx,n in enumerate(batch_texts)
+        ]
+        enc = tokenizer(batch_texts, add_special_tokens=True, truncation=False)
         lengths.extend([len(x) for x in enc["input_ids"]])
 
     lengths = np.array(lengths)
@@ -337,10 +344,22 @@ if __name__=="__main__":
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_name, use_fast=True)
     special_tokens = cfg.tokenize.special_tokens
     tokenizer.add_special_tokens(special_tokens)
-    
+
+
     meta = {"len_tokenizer": len(tokenizer)}
     with open(cfg.paths.tokenizer_meta_path, "w") as f:
         json.dump(meta, f)
+
+
+
+    if not cfg.tokenize.skip_tokenize_queries:
+        print(f"Reading queries...")
+        train_queries = load_queries(cfg.paths.queries_raw_dir)
+        cui_to_semantic = {}
+        for q in train_queries:
+            cui, semantic = q[1], q[2]
+            cui_to_semantic[cui] = semantic
+        tokenize_queries(train_queries, tokenizer, paths["queries"], cfg)
 
 
 
@@ -349,12 +368,5 @@ if __name__=="__main__":
         train_dictionary=load_dictionary(cfg.paths.dictionary_raw_path)
         dictionary_names = train_dictionary[:, 0]
         dictionary_cuis  = np.char.replace(train_dictionary[:, 1], "MESH:", "")
-        tokenize_dictionary(cuis=dictionary_cuis,names= dictionary_names ,  paths_key="dict", tokenizer = tokenizer, cfg=cfg)
-
-
-    if not cfg.tokenize.skip_tokenize_queries:
-        print(f"Reading queries...")
-        train_queries = load_queries(cfg.paths.queries_raw_dir)
-        tokenize_queries(train_queries, tokenizer, paths["queries"], cfg)
-
+        tokenize_dictionary(cuis=dictionary_cuis,names= dictionary_names ,  paths_key="dict", tokenizer = tokenizer, cfg=cfg, cui_to_semantic=cui_to_semantic)
 
