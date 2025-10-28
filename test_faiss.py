@@ -44,7 +44,7 @@ print("INIT SAMPLES....")
 sample_size= faiss_cluster_samples_num
 dictionary_inputs =   dataset.dictionary_inputs
 dictionary_att = dataset.dictionary_att
-
+queries_cuis = dataset.query_cuis
 #train samples
 sample_size= faiss_cluster_samples_num
 
@@ -62,7 +62,7 @@ cursor = 0
 samples_dir = "./draft"
 os.makedirs(samples_dir, exist_ok=True)
 samples_path = samples_dir + "/samples.pkl"
-
+dict_embeds_path  = samples_dir + "/dicts_embs.pkl"
 if os.path.exists(samples_path):
     samples_embeds = get_pkl(samples_path)
 else:
@@ -75,7 +75,6 @@ else:
         att = torch.as_tensor(dictionary_att[batch_idx],device=device)
 
         batch_embeds = encoder.get_emb(inp, att, use_amp=use_amp, use_no_grad=True)
-        batch_embeds = batch_embeds.contiguous()
         samples_embeds[cursor : cursor+(end-start)] = batch_embeds
         cursor += (end -start)
         del batch_embeds, inp, att
@@ -83,6 +82,7 @@ else:
     save_pkl(samples_embeds, samples_path)
 
 
+torch.cuda.empty_cache()
 
 print("INIT INDEX")
 num_threads = min(32, os.cpu_count() or 8)
@@ -104,19 +104,36 @@ print("INIT INDEX FINISHED")
 
 print(f"Training on samples...")
 faiss_index.train(samples_embeds)
+del samples_embeds
 print(f"Training on samples finsihed")
 batch_size = cfg.faiss.build_batch_size
+torch.cuda.empty_cache()
 
 
 print(f"Building with dictionary embeds")
-for start in tqdm(range(0, N, batch_size), desc="Building faiss index"):
-    end = min(start + batch_size, N)
-    inp  = torch.as_tensor(dictionary_inputs[start:end], device=device)
-    att = torch.as_tensor(dictionary_att[start:end],device=device)
-    embs = encoder.get_emb(inp, att, use_amp=use_amp, use_no_grad=True)
-    faiss_index.add(embs.contiguous())
-    del inp, att, embs
 
+
+if os.path.exists(dict_embeds_path):
+    embs_all = get_pkl(dict_embeds_path)
+    for start in tqdm(range(0, N, batch_size), desc="Building faiss index"):
+        end = min(start + batch_size, N)
+        embs_batch = torch.as_tensor(embs_all[start:end], device=device, dtype=torch.float32).contiguous()
+        faiss_index.add(embs_batch)
+else:
+    embs_all = torch.empty((N, hidden_size), dtype=torch.float32)
+    for start in tqdm(range(0, N, batch_size), desc="Building faiss index"):
+        end = min(start + batch_size, N)
+        inp  = torch.as_tensor(dictionary_inputs[start:end], device=device)
+        att = torch.as_tensor(dictionary_att[start:end],device=device)
+        embs = encoder.get_emb(inp, att, use_amp=use_amp, use_no_grad=True)
+        faiss_index.add(embs.contiguous())
+        embs_all[start:end] = embs.detach().cpu()
+        del inp, att, embs
+        torch.cuda.empty_cache()
+
+    save_pkl(embs_all, dict_embeds_path)
+
+torch.cuda.empty_cache()
 del dictionary_inputs, dictionary_att
 print(f"Building with dictionary embeds FINISHED")
 
@@ -141,6 +158,7 @@ for start in range(0, N,batch_size):
 del query_inputs, query_att
 
 print(f"Searching FINISHED")
+torch.cuda.empty_cache()
 
 
 print(f"Calculating recall....")
