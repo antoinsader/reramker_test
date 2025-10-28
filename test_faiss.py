@@ -16,6 +16,9 @@ from utils import get_pkl, save_pkl
 
 
 
+use_samples_cache = True
+use_build_cache=True
+use_faiss_cache=True
 
 
 cfg = GlobalConfig()
@@ -63,8 +66,10 @@ samples_dir = "./draft"
 os.makedirs(samples_dir, exist_ok=True)
 samples_path = samples_dir + "/samples.pkl"
 dict_embeds_path  = samples_dir + "/dicts_embs.pkl"
-if os.path.exists(samples_path):
+faiss_path = samples_dir + "/faiss_index.faiss"
+if os.path.exists(samples_path) and use_samples_cache:
     samples_embeds = get_pkl(samples_path)
+
 else:
     for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed samples"):
         end = min(start+samples_batch_size, len(sample_indices))
@@ -85,35 +90,48 @@ else:
 torch.cuda.empty_cache()
 
 print("INIT INDEX")
-num_threads = min(32, os.cpu_count() or 8)
-faiss.omp_set_num_threads(num_threads)
+
+if os.path.exists(faiss_path ) and use_faiss_cache:
+    gpu_resources = faiss.StandardGpuResources()
+    index = faiss.read_index(faiss_path)
+    co = faiss.GpuClonerOptions()
+    co.allowCpuCoarseQuantizer = True
+    index = faiss.index_cpu_to_gpu(gpu_resources, 0 , index, co)
+
+    faiss_index = index
 
 
-gpu_resources = faiss.StandardGpuResources()
-num_clusters = cfg.faiss.num_clusters(N) # if N is 4m then around 4000
-num_quantizers = cfg.faiss.num_quantizers
-nbits= cfg.faiss.nbits # bits per sub quantizer
-quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
-quantizer.hnsw.efConstruction = cfg.faiss.hnsw_efConstruction
-quantizer.hnsw.efSearch = cfg.faiss.hnsw_efSearch
-index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_quantizers, nbits)
-index.useFloat16LookupTables = use_amp
-index.nprobe = cfg.faiss.nrprobe
-faiss_index = index
-print("INIT INDEX FINISHED")
+else:
+    num_threads = min(32, os.cpu_count() or 8)
+    faiss.omp_set_num_threads(num_threads)
 
-print(f"Training on samples...")
-faiss_index.train(samples_embeds)
-del samples_embeds
-print(f"Training on samples finsihed")
-batch_size = cfg.faiss.build_batch_size
-torch.cuda.empty_cache()
+
+    gpu_resources = faiss.StandardGpuResources()
+    num_clusters = cfg.faiss.num_clusters(N) # if N is 4m then around 4000
+    num_quantizers = cfg.faiss.num_quantizers
+    nbits= cfg.faiss.nbits # bits per sub quantizer
+    quantizer = faiss.IndexHNSWFlat(hidden_size, 32)
+    quantizer.hnsw.efConstruction = cfg.faiss.hnsw_efConstruction
+    quantizer.hnsw.efSearch = cfg.faiss.hnsw_efSearch
+    index = faiss.GpuIndexIVFPQ(gpu_resources, quantizer, hidden_size, num_clusters, num_quantizers, nbits)
+    index.useFloat16LookupTables = use_amp
+    index.nprobe = cfg.faiss.nrprobe
+    faiss_index = index
+    print("INIT INDEX FINISHED")
+
+    print(f"Training on samples...")
+    faiss_index.train(samples_embeds)
+    del samples_embeds
+    print(f"Training on samples finsihed")
+    batch_size = cfg.faiss.build_batch_size
+    torch.cuda.empty_cache()
+    faiss.write_index(faiss.index_gpu_to_cpu(faiss_index), faiss_path)
 
 
 print(f"Building with dictionary embeds")
 
 
-if os.path.exists(dict_embeds_path):
+if os.path.exists(dict_embeds_path) and use_build_cache:
     embs_all = get_pkl(dict_embeds_path)
     for start in tqdm(range(0, N, batch_size), desc="Building faiss index"):
         end = min(start + batch_size, N)
@@ -145,7 +163,7 @@ candidates = np.zeros((N,topk))
 
 query_inputs = dataset.query_inputs
 query_att = dataset.query_att
-
+candidates = np.zeros((N, topk), dtype=np.int64)
 for start in range(0, N,batch_size):
     end = min(start + batch_size, N)
     inp  = torch.as_tensor(query_inputs[start:end], device=device)
@@ -153,7 +171,7 @@ for start in range(0, N,batch_size):
     embs = encoder.get_emb(inp, att, use_amp=use_amp, use_no_grad=True)
     embs = embs.contiguous()
     _, chunk_cand_idxs = faiss_index.search(embs, topk)
-    candidates[start:end] = chunk_cand_idxs.cpu().detach().numpy()
+    candidates[start:end] = chunk_cand_idxs.cpu().numpy()
     del inp, att, embs
 del query_inputs, query_att
 
@@ -163,7 +181,6 @@ torch.cuda.empty_cache()
 
 print(f"Calculating recall....")
 
-cands_idxs = candidates.astype(np.int64)
 correct = 0
 query_cuis = dataset.query_cuis
 dict_cuis = dataset.dict_cuis
