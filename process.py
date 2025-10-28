@@ -831,69 +831,6 @@ class MyFaiss():
         return self.save_index_path
 
 
-    def compute_semantic_types_centroids(self):
-        LOGGER.info("Computing semantic types centroids")
-        dictionary_inputs =  self.dataset.dictionary_inputs
-        dictionary_att = self.dataset.dictionary_att
-        
-        query_inputs =  self.dataset.query_inputs
-        query_att = self.dataset.query_att
-        
-        
-        dictionary_cuis = self.dataset.dict_cuis
-        queries_cuis = self.dataset.query_cuis
-
-
-        cui_to_semantics = {cui: semantic_type for cui, semantic_type in zip(queries_cuis, queries_semantics)}
-
-        #boolean mask to see which dictionary cuis has semantics
-        dictionary_idxs_has_semantics = [i for i, cui in enumerate(dictionary_cuis) if cui in cui_to_semantics]
-        self.encoder.encoder.eval()
-        batch_size = 6096
-        M  = len(dictionary_idxs_has_semantics)
-
-        semantics_sum  = defaultdict(lambda: torch.zeros(self.hidden_size, dtype=torch.float32))
-        semantics_count = defaultdict(int)
-
-        #embed dictionary semantics
-        for start in tqdm(range(0, M, batch_size ), desc="embed semantic dictionary entries "):
-            end = min(start+batch_size, M)
-            idxs = dictionary_idxs_has_semantics[start: end]
-            inp = torch.as_tensor(dictionary_inputs[idxs], device=self.device)
-            att = torch.as_tensor(dictionary_att[idxs], device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=True, use_no_grad=True)
-            for emb, cui in zip(embs, [dictionary_cuis[i ] for i in idxs]):
-                semantic = cui_to_semantics[cui]
-                semantics_sum[semantic] += emb.cpu()
-                semantics_count[semantic] += 1
-            del inp, att, embs
-        torch.cuda.empty_cache()
-
-        #embed queries semantics (1 cui for each semantic)
-        unique_query_cui_to_idx = {}
-        for idx, cui in enumerate(queries_cuis):
-            if cui not in unique_query_cui_to_idx:
-                unique_query_cui_to_idx[cui] = idx
-
-        unique_query_indices = list(unique_query_cui_to_idx.values())
-        M = len(unique_query_indices)
-        for start in tqdm(range(0, M, batch_size), desc="embed semantic queries"):
-            end = min(start + batch_size, M)
-            idxs = unique_query_indices[start:end]
-            inp = torch.as_tensor(query_inputs[idxs], device=self.device)
-            att = torch.as_tensor(query_att[idxs], device=self.device)
-            embs = self.encoder.get_emb(inp, att, use_amp=True, use_no_grad=True)
-            for emb, cui in zip(embs, [queries_cuis[i] for i in idxs]):
-                sem = cui_to_semantics[cui]
-                semantics_sum[sem] += emb.cpu()
-                semantics_count[sem] += 1
-            del inp, att, embs
-        torch.cuda.empty_cache()
-
-        centroids =     [semantics_sum[semantic] / semantics_count[semantic] for semantic in semantics_sum ]
-        return torch.stack(centroids)
-
-    
     def train_samples(self, N):
         assert self.faiss_index is not None
         sample_size= self.faiss_cluster_samples_num
@@ -912,7 +849,7 @@ class MyFaiss():
         # sample_indices = torch.randperm(N)[:sample_size]
 
 
-        samples_batch_size = 24_000
+        samples_batch_size = 8_000
         samples_embeds = torch.empty((sample_size, self.hidden_size), dtype=torch.float32)
         cursor = 0
         for start in tqdm(range(0, len(sample_indices), samples_batch_size),  desc="embed samples"):

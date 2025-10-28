@@ -17,16 +17,8 @@ from config import GlobalConfig
 from data import load_dictionary, load_queries
 from utils import save_pkl
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-def tokenize_fn(batch, tokenizer, max_length):
-    return tokenizer(
-        batch["names"],
-        return_tensors="pt",
-        padding="max_length",
-        truncation=True,
-        max_length=max_length
-    )
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+os.environ["TOKENIZERS_NUM_THREADS"] = str(min(8, os.cpu_count() or 8))
 
 
 
@@ -220,17 +212,17 @@ def tokenize_queries(queries, tokenizer, queries_paths, cfg:GlobalConfig):
     with open(queries_paths['meta'], "w") as f:
         json.dump(meta, f)
 
+    dataset = Dataset.from_dict({"text": full_queries})
+    tokenized = dataset.map(
+        lambda e: tokenizer(e["text"], padding="max_length", truncation=True, max_length=max_length),
+        batched=True,
+        num_proc=min(8, os.cpu_count())
+    )
 
     for start in tqdm(range(0, N, batch_size), desc=f"Tokenizing"):
         end = min(start+batch_size, N)
 
-        enc = tokenizer(
-            full_queries[start:end],
-            padding="max_length",
-            truncation=True,
-            max_length=max_length,
-            return_attention_mask=True,
-        )
+        enc = tokenized[start:end]
         input_ids_mmap[start:end] = np.asarray(enc["input_ids"], np.int32)
         att_mask_mmap[start:end] = np.asarray(enc["attention_mask"], np.int32)
         del enc
