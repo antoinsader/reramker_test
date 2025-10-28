@@ -65,7 +65,7 @@ if sample_size > N:
     sample_size = N
 sample_indices = torch.randperm(N)[:sample_size] 
 
-samples_batch_size = 24_000
+samples_batch_size = 16_000
 samples_embeds = torch.empty((sample_size, hidden_size), dtype=torch.float32)
 cursor = 0
 

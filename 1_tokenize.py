@@ -313,7 +313,7 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
     print("tokenized")
         
     # names is your np.array or list of dictionary names
-    sample_size = min(200000, len(names))
+    sample_size = min(750_000, len(names))
     sample_indices = random.sample(range(len(names)), sample_size)
     sample_texts = [names[i] for i in sample_indices]
 
