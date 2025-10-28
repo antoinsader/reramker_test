@@ -24,7 +24,7 @@ print("INIT INDEX")
 
 tokens_paths = TokensPaths("dict", "queries")
 dataset = MyDataset(tokens_paths, cfg)
-encoder = MyEncoder(use_cuda, cfg.model)
+encoder = MyEncoder(use_cuda, cfg)
 
 faiss_index_name =cfg.faiss.index_name
 faiss_cluster_samples_num = cfg.faiss.cluster_samples
