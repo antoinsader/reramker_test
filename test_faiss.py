@@ -30,6 +30,7 @@ device = "cuda"
 
 tokens_paths = TokensPaths("dict", "queries")
 dataset = MyDataset(tokens_paths, cfg)
+cfg.model.model_name = "./output/fine_tuned_embeddings/"
 encoder = MyEncoder(use_cuda, cfg)
 
 faiss_index_name =cfg.faiss.index_name
