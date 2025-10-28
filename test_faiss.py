@@ -189,8 +189,8 @@ dict_cuis = np.array(dict_cuis)
 
 ks = [1,2,4,5,8,10,12,15,17,20]
 correct = defaultdict(int)
-for i in range(len(queries_cuis)):
-    q_cui = queries_cuis[i]
+for i in range(len(query_cuis)):
+    q_cui = query_cuis[i]
     # print(f"tt : {dictionary_cuis[candidates[i, :3]]}")
     candidates_cuis = dict_cuis[candidates[i, :max(ks)] ]
     for k in ks:

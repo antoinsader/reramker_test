@@ -47,29 +47,37 @@ def fine_tune_embeddings(cfg: GlobalConfig, num_epochs=1, lr=1e-4, batch_size=12
     for epoch in range(num_epochs):
         np.random.shuffle(sample_indices)
         losses = []
+        # replace inside training loop
         for start in tqdm(range(0, len(sample_indices), batch_size), desc=f"Epoch {epoch+1}/{num_epochs}"):
             end = min(start + batch_size, len(sample_indices))
             batch_idx = sample_indices[start:end]
 
+            # positives
             q_inp = torch.as_tensor(dataset.query_inputs[batch_idx], device=device)
             q_att = torch.as_tensor(dataset.query_att[batch_idx], device=device)
-            d_inp = torch.as_tensor(dataset.dictionary_inputs[batch_idx], device=device)
-            d_att = torch.as_tensor(dataset.dictionary_att[batch_idx], device=device)
+            d_pos_inp = torch.as_tensor(dataset.dictionary_inputs[batch_idx], device=device)
+            d_pos_att = torch.as_tensor(dataset.dictionary_att[batch_idx], device=device)
 
+            # negatives (random dictionary entries)
+            neg_idx = np.random.choice(len(dataset.dictionary_inputs), size=len(batch_idx), replace=False)
+            d_neg_inp = torch.as_tensor(dataset.dictionary_inputs[neg_idx], device=device)
+            d_neg_att = torch.as_tensor(dataset.dictionary_att[neg_idx], device=device)
+
+            # embeddings
             q_emb = encoder.get_emb(q_inp, q_att, use_amp=False, use_no_grad=False)
-            d_emb = encoder.get_emb(d_inp, d_att, use_amp=False, use_no_grad=False)
+            d_pos_emb = encoder.get_emb(d_pos_inp, d_pos_att, use_amp=False, use_no_grad=False)
+            d_neg_emb = encoder.get_emb(d_neg_inp, d_neg_att, use_amp=False, use_no_grad=False)
 
-            # Target 1 for positive (same CUI)
-            target = torch.ones(q_emb.size(0), device=device)
-            loss = criterion(q_emb, d_emb, target)
+            # build batch of positive and negative pairs
+            x1 = torch.cat([q_emb, q_emb], dim=0)
+            x2 = torch.cat([d_pos_emb, d_neg_emb], dim=0)
+            target = torch.cat([
+                torch.ones(q_emb.size(0), device=device),
+                -torch.ones(q_emb.size(0), device=device)
+            ])
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            losses.append(loss.item())
+            loss = criterion(x1, x2, target)
 
-            del q_inp, q_att, d_inp, d_att, q_emb, d_emb, loss
-            torch.cuda.empty_cache()
 
         print(f"Epoch {epoch+1} mean loss: {np.mean(losses):.6f}")
 
@@ -84,4 +92,4 @@ def fine_tune_embeddings(cfg: GlobalConfig, num_epochs=1, lr=1e-4, batch_size=12
 
 if __name__ == "__main__":
     cfg = GlobalConfig()
-    fine_tune_embeddings(cfg, num_epochs=4, lr=2e-4, batch_size=128)
+    fine_tune_embeddings(cfg, num_epochs=4, lr=3e-4, batch_size=128)
