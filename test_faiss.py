@@ -16,9 +16,9 @@ from utils import get_pkl, save_pkl
 
 
 
-use_samples_cache = True
-use_build_cache=True
-use_faiss_cache=True
+use_samples_cache = False
+use_build_cache= False
+use_faiss_cache= False
 
 
 cfg = GlobalConfig()

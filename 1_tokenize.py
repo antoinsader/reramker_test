@@ -296,7 +296,12 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
     for start in tqdm(range(0, names_size, batch_size), desc=f"Tokenizing"):
         end = min(start+batch_size, names_size)
         batch_texts = names[start:end].tolist()
-        batch_texts = [f"{special_tokens_dict['mention_name_start']} {n} {special_tokens_dict['mention_name_end']} " for n in batch_texts]
+        batch_texts = [
+            f"{special_tokens_dict['mention_name_start']} {n} {special_tokens_dict['mention_name_end']} "
+            f"{special_tokens_dict['context_start']} none {special_tokens_dict['context_end']} "
+            f"{special_tokens_dict['type_start']} unknown {special_tokens_dict['type_end']}"
+            for n in batch_texts
+        ]
         enc = tokenizer(
             batch_texts,
             padding="max_length",
@@ -311,7 +316,6 @@ def tokenize_dictionary(cuis, names, paths_key, tokenizer, cfg:GlobalConfig, sem
     input_ids_mmap.flush()
     att_mask_mmap.flush()
     print("tokenized")
-        
     # names is your np.array or list of dictionary names
     sample_size = min(750_000, len(names))
     sample_indices = random.sample(range(len(names)), sample_size)
