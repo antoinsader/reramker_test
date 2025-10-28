@@ -163,7 +163,7 @@ torch.cuda.empty_cache()
 
 print(f"Calculating recall....")
 
-cands_idxs = candidates
+cands_idxs = candidates.astype(np.int64)
 correct = 0
 query_cuis = dataset.query_cuis
 dict_cuis = dataset.dict_cuis
