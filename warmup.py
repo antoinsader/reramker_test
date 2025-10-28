@@ -84,8 +84,6 @@ def fine_tune_embeddings(cfg: GlobalConfig, num_epochs=3, lr=3e-5, batch_size=12
                         neg_idx.append(j)
                         break
 
-            pos_idx = torch.as_tensor(pos_idx, device=device)
-            neg_idx = torch.as_tensor(neg_idx, device=device)
 
             q_inp = torch.as_tensor(dataset.query_inputs[batch_idx], device=device)
             q_att = torch.as_tensor(dataset.query_att[batch_idx], device=device)
