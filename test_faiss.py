@@ -28,7 +28,7 @@ use_cuda = True
 device = "cuda"
 
 
-tokens_paths = TokensPaths("dict", "queries")
+tokens_paths = TokensPaths("small_dict", "queries")
 dataset = MyDataset(tokens_paths, cfg)
 cfg.model.model_name = "./output/fine_tuned_embeddings/"
 encoder = MyEncoder(use_cuda, cfg)
