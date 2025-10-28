@@ -61,6 +61,8 @@ dictionary_att = dataset.dictionary_att
 sample_size= faiss_cluster_samples_num
 
 
+torch.cuda.empty_cache()
+
 if sample_size > N:
     sample_size = N
 sample_indices = torch.randperm(N)[:sample_size] 
